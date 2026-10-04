@@ -12,7 +12,9 @@ export default defineConfig(({ command }) => ({
         index: fileURLToPath(new URL('./index.html', import.meta.url)),
         'oauth-approve': fileURLToPath(new URL('./src/oauth-approve.ts', import.meta.url)),
       },
-      output: { entryFileNames: 'assets/[name].js' },
+      output: {
+        entryFileNames: (chunk) => chunk.name === 'oauth-approve' ? 'assets/oauth-approve.js' : 'assets/[name]-[hash].js',
+      },
     },
   },
   plugins: [
