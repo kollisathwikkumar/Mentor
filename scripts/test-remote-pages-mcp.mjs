@@ -95,7 +95,10 @@ try {
   const authorizeHtml = await authorizeResponse.text();
   const requestId = authorizeHtml.match(/name="request_id" value="([A-Za-z0-9_-]+)"/)?.[1];
   assert.ok(requestId, 'OAuth authorize page should issue a short-lived request identifier.');
-  assert.match(authorizeHtml, /Connect wallet and approve/);
+  assert.match(authorizeHtml, /Continue with my wallet/);
+  assert.match(authorizeHtml, /You do not need to know or type your wallet address/);
+  assert.match(authorizeHtml, /Use the wallet account you used when you created your Mandate permission/);
+  assert.match(authorizeHtml, /Mandate workspace/);
   assert.doesNotMatch(authorizeHtml, /Mandate access token/);
   const field = (name) => authorizeHtml.match(new RegExp(`name="${name}" value="([^"]+)"`))?.[1];
   const walletNonce = field('wallet_nonce');
