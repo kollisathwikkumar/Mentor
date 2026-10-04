@@ -1,6 +1,6 @@
 # Mandate — Backend Architecture and Implementation Status
 
-**Status:** Architecture baseline implemented as a local vertical slice; testnet deployment and bounded live inference remain pending.  
+**Status:** Architecture baseline implemented as a local vertical slice; testnet deployment, live inference, and bounded execution are verified, while wallet UI acceptance remains pending.
 **Purpose:** Record trust boundaries, the contract/API shape, implementation evidence, and remaining proof gates.  
 **Track:** Metropolis Track 04 — Trust, Identity & AI Infrastructure.  
 **Cost model:** Monad Testnet, public RPC, and local tooling remain the low-cost base; live inference uses a hosted model API and may incur variable token charges. Provider and hard spend cap must be confirmed before billing is enabled; see [`FREE_RESOURCES.md`](FREE_RESOURCES.md).
@@ -11,7 +11,7 @@
 
 ## Implementation status — 2026-10-04
 
-Implemented packages follow this design: `contracts/MandateVault.sol`, `packages/policy`, `packages/intent-compiler`, `packages/model-adapter`, `packages/mandate-sdk`, `packages/mcp-server`, and `apps/console`. Local evidence includes deterministic TypeScript tests, Foundry invariants, local Anvil + real MCP stdio end-to-end checks, and Scrapling-rendered console smoke tests. No deployment or live inference request has been made; both remain separate configuration/release gates.
+Implemented packages follow this design: `contracts/MandateVault.sol`, `packages/policy`, `packages/intent-compiler`, `packages/model-adapter`, `packages/mandate-sdk`, `packages/mcp-server`, and `apps/console`. Evidence includes deterministic TypeScript tests, Foundry invariants, local Anvil + MCP stdio end-to-end checks, live NVIDIA MCP proposal, and Monad Testnet transfer/deny/revoke/withdraw receipts. Browser-wallet acceptance remains a separate operational gate.
 
 ## 1. Executive architecture decision
 

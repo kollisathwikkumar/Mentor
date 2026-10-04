@@ -17,6 +17,9 @@
     "audit:deps": "npm audit --omit=dev",
     "audit:secrets": "node scripts/check-secrets.mjs",
     "test:contracts": "forge test",
+    "test:model-mcp:live": "npm run build --workspace @mandate/mcp-server && node --env-file=.env.local scripts/test-model-mcp-live.mjs",
+    "test:testnet-flow": "npm run build --workspace @mandate/mcp-server && node --env-file=.env.local scripts/test-testnet-live.mjs",
+    "deploy:testnet": "forge build && node --env-file=.env.local scripts/deploy-mandate-testnet.mjs",
     "coverage:contracts": "forge coverage",
     "test:e2e": "npm run build --workspace @mandate/mcp-server && forge build && node scripts/test-backend-e2e.mjs",
     "test:browser": "bash scripts/scrapling-smoke.sh"

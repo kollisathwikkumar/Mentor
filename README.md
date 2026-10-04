@@ -11,7 +11,7 @@ The model is an untrusted proposer. The policy compiler validates and normalizes
 - `packages/intent-compiler`: untrusted model proposal parsing, deterministic normalization, explicit missing-field questions, and review-only policy commitment.
 - `packages/model-adapter`: NVIDIA NIM chat completions adapter with HTTPS validation, input/output bounds, timeout, server-only key handling, and response schema validation.
 - `packages/mandate-sdk`: Monad Testnet viem reader and EIP-712 signing/submission path.
-- `packages/mcp-server`: stdio tools `get_mandate_status` and `request_bounded_transfer`; tool inputs cannot select recipient, signer, URL, or calldata.
+- `packages/mcp-server`: stdio tool `propose_mandate` returns review-only output; chain status/transfer tools are registered only when chain config is present. Codex is configured to expose `propose_mandate`, `get_mandate_status`, and `request_bounded_transfer` with prompt approval; restart Codex to reload the allowlist.
 - `apps/console`: wallet connect, create/fund/revoke actions, and records read from contract state.
 
 ## Local setup
@@ -29,15 +29,19 @@ npm run audit:secrets
 npm audit
 ```
 
+With `NVIDIA_API_KEY` and `NVIDIA_MODEL` set in ignored `.env.local`, run `npm run test:model-mcp:live` to build and call the review-only proposal tool over MCP stdio using NVIDIA inference. This live test exposes only `propose_mandate`; it does not submit a chain transaction.
+
+The current test deployment is on Monad Testnet (chain ID `10143`) at `0x77065a818481ceebba93e79988bef9fd646f457d` (deployment block `68065182`). `npm run deploy:testnet` checks the RPC chain ID, refuses non-10143 networks and pre-existing contract addresses, verifies deployed bytecode, and writes the contract address back to `.env.local`. Test-only deployer and agent keys are stored in ignored `.env.local`; do not send private keys in chat.
+
 To open the console without chain configuration:
 
 ```sh
 npm run dev --workspace @mandate/console
 ```
 
-With the console running locally, `npm run test:browser` uses Scrapling with `--ai-targeted` to smoke-check its rendered title and primary form. The console build is static. Copy `.env.example` to a root `.env` (the Vite config reads only `VITE_`-prefixed values into the static app) and set `VITE_MONAD_CONTRACT_ADDRESS` before connecting to deployed contract state. For a local MCP server, configure `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, `MANDATE_CONTRACT_ADDRESS`, and a dedicated test-only `MANDATE_AGENT_PRIVATE_KEY`. Keep all actual keys in ignored local environment files; never place them in the console or model prompt.
+With the console running locally, `npm run test:browser` uses Scrapling with `--ai-targeted` to smoke-check its rendered title and primary form. `.env.local` contains the testnet contract address and frontend deployment block. For chain MCP tools, configure `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, `MANDATE_CONTRACT_ADDRESS`, and a dedicated test-only `MANDATE_AGENT_PRIVATE_KEY` in ignored `.env.local`. The server can start in model-only mode without a contract; in that mode only the proposal tool is registered. Keep all actual keys in ignored local environment files; never place them in the console or model prompt.
 
-NVIDIA calls require a backend `NVIDIA_API_KEY` and an explicit `NVIDIA_MODEL`. The adapter is not called by the deterministic test suite. A live smoke test has been run against the configured `nvidia/nemotron-3-ultra-550b-a55b` model and produced a review-only policy preview; it did not authorize or submit a transfer. The proposal path remains a library integration and is not exposed as an MCP tool yet. Keep the key in an ignored `.env.local` file; `.env.example` contains placeholders only.
+NVIDIA calls require a backend `NVIDIA_API_KEY` and an explicit `NVIDIA_MODEL`. The deterministic suite does not call the provider; the separate live smoke test exercises the configured `nvidia/nemotron-3-ultra-550b-a55b` through the MCP `propose_mandate` tool and returns only a schema-validated review preview. Codex is configured to allow the proposal and read-only status tools with prompt approval; transfer is not allowed there. Restart Codex to load the current MCP configuration. Keep the key in ignored `.env.local`; `.env.example` contains placeholders only.
 
 ## Contract test configuration
 
@@ -53,4 +57,4 @@ Foundry is pinned through the project-local `@foundry-rs/forge` and `@foundry-rs
 
 ## Current release state
 
-Local unit tests, Solidity tests, strict TypeScript checks, a local MCP/Anvil end-to-end run, and static console build are in place. One live NVIDIA inference successfully produced a review-only policy preview. No contract has been deployed and no wallet transaction has been submitted; model proposals are not yet exposed through the MCP tool surface. This is a verified prototype, not a production-ready or third-party-audited service.
+Local unit tests, Solidity tests, strict TypeScript checks, local MCP/Anvil end-to-end tests, and a live MCP-to-NVIDIA proposal smoke test pass. Monad Testnet acceptance now verifies a capped 0.01 MON transfer, above-cap and post-revocation denials, principal revocation, and withdrawal of the remaining 0.01 MON; see [`docs/testnet-acceptance-2026-10-04.md`](docs/testnet-acceptance-2026-10-04.md). The browser-wallet path remains unaccepted because Chrome has no EIP-1193 provider. This remains a testnet prototype, not production-ready or third-party audited.

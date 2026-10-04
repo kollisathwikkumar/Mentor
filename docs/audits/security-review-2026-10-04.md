@@ -10,7 +10,7 @@ No Critical or High issue was identified in the reviewed local path. The local A
 |---|---|---|
 | A01 Broken access control | Pass | Principal-only create/fund/revoke/withdraw; transfer requires registered EIP-712 agent; gateway does not accept recipient/signer overrides. |
 | A02 Cryptographic failures | Pass with residual | OpenZeppelin EIP-712/ECDSA and ReentrancyGuard; `.env.example` is placeholder-only and the local NVIDIA key is in ignored `.env.local`; local signer remains an environment-held EOA and needs operational key rotation before any non-test deployment. |
-| A03 Injection | Pass | Zod strict MCP arguments, exact decimal parsing, no shell or arbitrary calldata tools; live Nemotron output is JSON-parsed, schema-checked, normalized, and returned as review-only data. |
+| A03 Injection | Pass | Zod strict MCP arguments, exact decimal parsing, no arbitrary calldata tools; `propose_mandate` passes live Nemotron output through JSON/schema validation and normalization, returning review-only data. |
 | A04 Insecure design | Pass with release gate | Contract performs atomic checks and transfer; user wallet confirms creation. No model output itself grants authority. |
 | A05 Security misconfiguration | Pass with environment caveat | Static UI CSP is present; server-only credentials; public RPC and contract address are explicit config. Deployment headers and RPC rate/availability remain release checks. |
 | A06 Vulnerable components | Pass | `npm audit` reports 0 vulnerabilities; package versions are lockfile-pinned. |
@@ -21,15 +21,19 @@ No Critical or High issue was identified in the reviewed local path. The local A
 
 ## Release blockers / follow-up
 
-1. One live proposal smoke test succeeded, but model inference is not yet exposed through the MCP path. Before enabling it there, define a hard spend ceiling and per-run call cap, verify provider usage accounting, and retain `NVIDIA_API_KEY` only in an ignored backend environment file. The current adapter has bounded prompts/output, disabled reasoning tokens for this extraction use, and a timeout, but does not meter provider cost.
-2. Deploy only to Monad Testnet with a dedicated throwaway signer after contract review and wallet handoff. No deployment or live wallet transaction was performed here.
-3. Run a third-party Solidity audit before any production value or production signer is used.
+1. The live proposal, read-only status, and bounded transfer tools are allowlisted in Codex with prompt approval. The bounded live flow passed for the disposable test mandate; browser-wallet acceptance still needs an EIP-1193 provider and an active Codex restart. Add a hard provider spend ceiling, a per-run call cap, and usage monitoring; the adapter bounds prompt/output size and timeout but does not meter provider cost.
+2. The Testnet deployment script pins chain ID 10143, requires HTTPS and a separate deployer key, refuses a nonzero existing address, verifies deployed bytecode, and keeps the deployer key out of output. The contract is deployed at `0x77065a818481ceebba93e79988bef9fd646f457d` (deployment block `68065182`, 5,910 bytes of code). A test mandate was created and funded with 0.02 MON; live MCP `get_mandate_status` returned the expected active state, limits, deposit, and nonce. No bounded transfer has been submitted on the live testnet.
+3. The Chrome console reports no EIP-1193 wallet provider; browser wallet create/fund/revoke acceptance remains pending. Restart Codex to load the updated MCP allowlist. Run a third-party Solidity audit and complete key-management, monitoring, and provider-cost controls before any production value or production signer is used.
 
 ## Validation commands
 
 - `npm run audit:secrets` → pass, no credentials in scanned project files; ignored `.env.local` is excluded.
 - `npm audit` → pass, 0 vulnerabilities.
-- `npm test` → pass, 33 TypeScript tests; 100% statements/branches/functions/lines over deterministic policy, compiler, provider adapter, and gateway modules.
-- Live NVIDIA adapter + intent compiler smoke → pass, `ready_for_user_review`; numeric Unix expiry normalized to `1893456000`; no transaction submitted.
+- `npm test` → pass, 43 TypeScript tests; 100% reported coverage over the included deterministic core modules.
+- `npm run test:model-mcp:live` → pass, live MCP stdio call to NVIDIA returned `ready_for_user_review`; only the proposal tool was exposed; no transaction submitted.
+- `npx vitest run scripts/deployment-config.test.js` → pass, 4 deployment preflight cases.
+- `npm run deploy:testnet` → pass; Monad Testnet chain ID 10143; deployment receipt successful; deployed code verified (5,910 bytes).
+- Live testnet create/fund → pass; 0.02 MON deposited into the test mandate with 0.01 MON per-call cap.
+- `npm run test:testnet-flow` → pass; live MCP transfer of 0.01 MON, gas-adjusted recipient balance and contract event verified; above-cap request denied with `PER_CALL_LIMIT`; principal revocation succeeded; post-revocation request denied with `MANDATE_INACTIVE`; remaining 0.01 MON withdrawal verified; final status inactive, spent 0.01, deposited 0, nonce 1.
 - `npm run test:contracts` → pass, 15 Foundry tests.
 - `npm run test:e2e` → pass, local MCP process + Anvil end-to-end allow/over-limit/revoke path.

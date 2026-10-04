@@ -24,6 +24,12 @@
     },
     {
       "path": "../mandate-sdk"
+    },
+    {
+      "path": "../intent-compiler"
+    },
+    {
+      "path": "../model-adapter"
     }
   ],
   "include": [
