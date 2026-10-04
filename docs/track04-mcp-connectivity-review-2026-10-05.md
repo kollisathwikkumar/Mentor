@@ -30,7 +30,7 @@ AI clients otherwise need broad credentials or manual approval for every operati
 
 ## Verification record
 
-Local release/integration checks are recorded below. Hosted/Claude/Kimi results are appended after deployment. A green source test alone does not prove production behavior.
+The local release gate and the live production checks below are separate evidence. A green source test alone does not prove production behavior.
 
 ### Security review
 
@@ -62,15 +62,26 @@ Local release/integration checks are recorded below. Hosted/Claude/Kimi results 
 | Foundry tests | PASS — 15/15 Monad Vault tests |
 | D1 / MCP / OAuth integration | PASS — local D1 migration, unauthenticated denial, origin/CORS policy, bearer Streamable HTTP handshake, OAuth PKCE, same-origin consent asset, selected-scope grant, refresh rotation/replay denial, read/proposal/chain tool discovery, Monad status read, revoked-mandate denial |
 | Dependency audit | PASS — `npm audit --omit=dev`: 0 vulnerabilities |
-| Vite production build | PASS — emitted `/assets/oauth-approve.js` and app bundle |
-| Live Scrapling page check | Pending deploy |
-| Claude remote MCP client | Not yet re-tested against this build |
-| Kimi remote MCP client | Not yet re-tested against this build |
+| Vite production build | PASS — emitted `/assets/oauth-approve.js` and content-hashed app/identity chunks |
+| Live hosted app (Scrapling) | PASS — `https://mandate-console.pages.dev/#/workspace` returned HTTP 200 and displayed the passkey-first onboarding, existing-wallet option, and updated MCP explanation after the direct Pages deploy. |
+| Live consent bundle (Scrapling) | PASS — `/assets/oauth-approve.js` returned HTTP 200 from the canonical host and loaded its same-origin, content-hashed passkey helper. |
+| Live status endpoint (Scrapling) | PASS — `/mcp/status` returned HTTP 200 with `ready: true`; `connected: false` correctly represented that no authorization was active in the test browser. |
+| Live unauthenticated MCP request | PASS — `POST /mcp` initialize without a bearer token returned HTTP 401, `A valid bearer token is required.` |
+| Claude client | PARTIAL — the signed-in Claude web connector launched Mandate's canonical-host OAuth authorization flow. The hosted page showed `mandate:read` selected and `mandate:propose` / `mandate:transfer` unselected. No authorization was granted and no token/tool handshake was completed: the account holder must choose an identity and approve the scopes. |
+| Kimi browser client | NOT TESTED — Kimi's web chat was signed out and did not expose MCP connector settings in that session. |
+| Kimi Code compatibility research | VERIFIED from official Kimi documentation via Scrapling — current Kimi Code supports remote HTTP MCP and OAuth; its TUI offers `/mcp-config`, `/mcp`, and `/mcp-config login <server-name>`. The older Kimi CLI docs warn it is archived. An actual Kimi Code installation/account was not present, so a real Mandate authorization/tool call was not completed. |
+
+### Deployment notes and client limitations
+
+- The first Cloudflare Pages build after the source changes failed because the clean CI environment lacked the previously implicit Node type declarations (`process` and `node:crypto` errors). Adding the declared `@types/node` dev dependency fixed the clean build; the failing log was not treated as a passing deployment.
+- The first production scrape still returned the old app bundle. The app entry was then changed to content-hashed filenames, followed by a direct Pages upload of the verified build. The canonical hostname was re-scraped after that deployment and returned the new UI/assets. The successful Pages deployment URL was `https://e24ec79f.mandate-console.pages.dev`; canonical production checks were against `https://mandate-console.pages.dev`.
+- Claude demonstrated successful client-to-hosted-OAuth launch, but final consent is intentionally not counted as a successful connection. A passkey enrollment would create a new Mandate identity; it will not reveal an existing wallet's policies. To read an existing mandate, the owner needs the original EVM identity that created it. Only read was preselected; no write/transfer access was approved in this test.
+- Kimi's official Kimi Code instructions use an OAuth client flow and say HTTP MCP is supported. For the current Kimi Code CLI/TUI, use its interactive `/mcp-config` flow and select Mandate's URL, then `/mcp-config login <name>` for OAuth and `/mcp` to inspect status. A browser-only Kimi chat page is not the same product surface. This is documented guidance, not a live Kimi success claim.
 
 ## Remaining work before submission
 
 - Select Track 04 in the portal and complete the description, logo, live URL, and demo/pitch clips; do not imply these were completed by this source change.
 - Demonstrate passkey creation with a PRF-capable authenticator, prove same-account policy reads, show a read-only query and review-only proposal in an actual model client, then demonstrate an opt-in bounded transfer and a denied out-of-bounds request using testnet funds.
-- Re-test Claude and Kimi in their actual supported client surfaces with user-controlled passkey/account approval. No passkey ceremony or transfer is counted as completed by a mock signature.
+- Complete Claude authorization and a real read tool call after the account holder chooses the intended identity and approves read-only consent. Install/sign into Kimi Code, then complete its OAuth flow and run `/mcp` plus a read tool call. No passkey ceremony or transfer is counted as completed by a mock signature.
 - Interview agent developers/users and obtain evidence for market/traction rubric items; refine the product claim from those findings.
 - Validate Mera bounty eligibility against the live bounty brief before claiming the “entire account layer” requirement; this app retains an EVM wallet compatibility route.
