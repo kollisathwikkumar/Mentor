@@ -19,8 +19,8 @@ function authorizationDatabase(): OAuthDatabase {
   };
 }
 
-describe('OAuth wallet sign-in instructions', () => {
-  it('explains wallet ownership, automatic address selection, and first-time setup', async () => {
+describe('OAuth account sign-in instructions', () => {
+  it('offers passkey-first sign-in with a familiar-wallet fallback and explains limits', async () => {
     const params = new URLSearchParams({
       client_id: 'client-1',
       redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
@@ -35,9 +35,16 @@ describe('OAuth wallet sign-in instructions', () => {
     );
 
     const page = await response.text();
-    expect(page).toContain('You do not need to know or type your wallet address');
-    expect(page).toContain('Use the wallet account you used when you created your Mandate permission');
-    expect(page).toContain('If you are new to Mandate, set up a wallet and create a permission first');
+    expect(page).toContain('Create a passkey');
+    expect(page).toContain('Continue with my passkey');
+    expect(page).toContain('Use an existing wallet instead');
+    expect(page).toContain('same account that owns your Mandate permissions');
+    expect(page).toContain('a new passkey creates a new Mandate account');
+    expect(page).toContain('No address or API key to copy.');
+    expect(page).toContain('Passkeys need an authenticator with WebAuthn PRF support');
+    expect(page).toContain('Signing in is a free message signature.');
+    expect(page).toContain('script type="module" src="/assets/oauth-approve.js"');
+    expect(response.headers.get('Content-Security-Policy')).toContain("script-src 'self'");
     expect(page).toContain('Mandate workspace');
   });
 });

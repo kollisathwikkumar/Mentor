@@ -1,6 +1,6 @@
 # Mandate — Track 04 Ideation and Problem Research
 
-**Status:** Product hypothesis and implementation plan; not yet user-validated or implemented.  
+**Status (5 October 2026):** Track-fit hypothesis with an implemented testnet authorization primitive and hosted MCP/OAuth prototype. User demand remains unvalidated; see the honest shipped-vs-roadmap map below.
 **Research checked:** 4 October 2026  
 **Track:** Metropolis Track 04 — Trust, Identity & AI Infrastructure
 
@@ -9,6 +9,20 @@
 The supplied [Monad Metropolis official page](https://monad.xyz/developers/hackathons/metropolis) was fetched with Scrapling (`extract get --ai-targeted`) and returned HTTP 200. It identifies Track 04 as Trust, Identity & AI Infrastructure, focused on problems around identity, provenance, data ownership, and agent trust. It highlights Monad's P256 precompile, WebAuthn/passkey accounts, and the ERC-8004 agent registry as relevant directions. Track 04 favors protocol and infrastructure work, so Mandate should be a reusable authorization primitive with a working integration—not only a dashboard.
 
 Primary-source research used Scrapling 0.4.14+ for Monad, OWASP, NIST, and C2PA resources. The Metropolis portal requires sign-in, so public track information was checked against Monad's official page. Scrapling fetch status details are recorded in §11.
+
+### Track 04 mapping: what Mandate solves now
+
+Track 04 is **Trust, Identity & AI Infrastructure**. The portal describes a reusable protocol primitive for trust, provenance, user-owned data, and AI—not just a standalone consumer app. Mandate's credible, demoable problem is narrower and concrete: an AI client otherwise receives broad authority, while a user cannot verify that the next supported action stays within their chosen boundary.
+
+| Track question | Mandate's current answer | Evidence / limit |
+|---|---|---|
+| Who is the user? | A passkey-derived EVM account (Mera/WebAuthn PRF) or an existing EVM wallet; OAuth binds the MCP principal to that address. | The authenticator's PRF support is required for passkeys; wallet compatibility remains a fallback. |
+| What is the trust primitive? | A Monad Testnet `MandateVault` policy bound to a principal, agent signer, one recipient, native MON per-call/total limits, expiry, nonce, and revocation. | It is a narrow financial policy, not arbitrary tool/API authorization. |
+| How do AI clients reach it? | One vendor-neutral remote Streamable HTTP MCP endpoint with OAuth 2.1 + PKCE, dynamic registration, per-tool scopes, and the same identity flow. | Works only in MCP clients implementing the relevant remote transport and OAuth flow. |
+| Is it more than transfers? | `mandate:read` provides read-only status; `mandate:propose` produces a review-only proposal; `mandate:transfer` requests a bounded action. The user can grant only requested scopes. | Proposals do not execute tasks or create/update policies. The front-page conversation is a local draft, not an AI agent runtime. |
+| What should not be claimed? | Universal agent execution, general-purpose API permissions, production-ready custody, a live Mera bounty integration, user traction, or finished third-party integrations. | These are roadmap/validation work, not currently shipped proof. |
+
+**Hackathon thesis:** Mandate is a reusable identity-bound authorization layer for AI tools. A passkey makes the user account approachable; scoped MCP capabilities make delegation portable across model vendors; an independently checked onchain policy makes the supported transfer boundary enforceable. The best demo should show the read-only and review-only paths before an explicitly opted-in transfer, including a denial when the request exceeds the rule.
 
 ## 2. Problem and user need
 
@@ -26,7 +40,7 @@ This is a hypothesis, not a claim that no competing permission products exist. I
 
 ## 3. Product definition
 
-**Mandate** is a security and authorization layer for autonomous AI agents. It converts a user's natural-language request into a proposed, typed policy; asks clarifying questions when required information is missing or ambiguous; and presents the exact policy for user approval. Only after the user confirms it with their wallet does that policy become a signed onchain Mandate. A deterministic gateway checks supported actions, while a Monad contract independently enforces supported onchain actions.
+**Long-term Mandate** is a security and authorization layer for autonomous AI agents. The **current prototype** implements the narrower path: a user defines fixed fields in the console, authorizes a bounded native-MON policy on Monad Testnet, and exposes owner-scoped read/propose/transfer MCP tools through OAuth. It does not parse the local chat draft into a policy or execute arbitrary work. A deterministic gateway and the Monad contract independently enforce the supported transfer path.
 
 **Core principle:** the model proposes; the user authorizes; deterministic software and the contract enforce.
 

@@ -93,11 +93,15 @@ try {
   const authorizeResponse = await fetch(authorizeUrl);
   assert.equal(authorizeResponse.status, 200);
   const authorizeHtml = await authorizeResponse.text();
+  const passkeyBundleResponse = await fetch(`${baseUrl}/assets/oauth-approve.js`);
+  assert.equal(passkeyBundleResponse.status, 200, 'OAuth consent must load its same-origin passkey/wallet bundle.');
+  assert.match(passkeyBundleResponse.headers.get('content-type') ?? '', /javascript/);
   const requestId = authorizeHtml.match(/name="request_id" value="([A-Za-z0-9_-]+)"/)?.[1];
   assert.ok(requestId, 'OAuth authorize page should issue a short-lived request identifier.');
-  assert.match(authorizeHtml, /Continue with my wallet/);
-  assert.match(authorizeHtml, /You do not need to know or type your wallet address/);
-  assert.match(authorizeHtml, /Use the wallet account you used when you created your Mandate permission/);
+  assert.match(authorizeHtml, /Create a passkey/);
+  assert.match(authorizeHtml, /Continue with my passkey/);
+  assert.match(authorizeHtml, /Use an existing wallet instead/);
+  assert.match(authorizeHtml, /Passkeys need an authenticator with WebAuthn PRF support/);
   assert.match(authorizeHtml, /Mandate workspace/);
   assert.doesNotMatch(authorizeHtml, /Mandate access token/);
   const field = (name) => authorizeHtml.match(new RegExp(`name="${name}" value="([^"]+)"`))?.[1];
@@ -116,9 +120,14 @@ try {
     walletNonce,
   });
   const walletSignature = await account.signMessage({ message: walletMessage });
+  const excessScopeResponse = await fetch(`${baseUrl}/oauth/authorize`, {
+    method: 'POST', headers: { origin: 'https://claude.ai', 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams([['request_id', requestId], ['wallet_address', account.address], ['wallet_signature', walletSignature], ['granted_scope', 'mandate:transfer']]), redirect: 'manual',
+  });
+  assert.equal(excessScopeResponse.status, 400, 'OAuth approval must reject any scope the client did not request.');
   const approvalResponse = await fetch(`${baseUrl}/oauth/authorize`, {
     method: 'POST', headers: { origin: 'https://claude.ai', 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ request_id: requestId, wallet_address: account.address, wallet_signature: walletSignature }), redirect: 'manual',
+    body: new URLSearchParams([['request_id', requestId], ['wallet_address', account.address], ['wallet_signature', walletSignature], ['granted_scope', 'mandate:read']]), redirect: 'manual',
   });
   assert.equal(approvalResponse.status, 302, 'Wallet approval should redirect despite a client-origin header.');
   const callback = new URL(approvalResponse.headers.get('location'));

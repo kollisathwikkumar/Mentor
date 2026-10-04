@@ -131,11 +131,10 @@ function oauthError(error: string, status = 400, description?: string): Response
 }
 
 function html(title: string, content: string, status = 200): Response {
-  const nonce = randomSecret(16);
-  const doc = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlEscape(title)}</title><style>body{margin:0;background:#090b0a;color:#e7ebe5;font:16px system-ui,sans-serif}.wrap{max-width:560px;margin:8vh auto;padding:28px;border:1px solid #363d38;background:#111412}h1{font-size:23px}p,li{color:#b3bab4;line-height:1.55}button{margin-top:16px;padding:12px 18px;border:0;background:#d4ff72;color:#10120e;font-weight:700;cursor:pointer}.muted{font-size:13px;color:#949b94}code{overflow-wrap:anywhere}</style><main class="wrap"><h1>${htmlEscape(title)}</h1>${content.replaceAll('__CSP_NONCE__', nonce)}</main></html>`;
+  const doc = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlEscape(title)}</title><style>body{margin:0;background:#090b0a;color:#e7ebe5;font:16px system-ui,sans-serif}.wrap{max-width:560px;margin:8vh auto;padding:28px;border:1px solid #363d38;background:#111412}h1{font-size:23px}p,li{color:#b3bab4;line-height:1.55}button{margin:8px 8px 8px 0;padding:12px 18px;border:0;background:#d4ff72;color:#10120e;font-weight:700;cursor:pointer}.muted{font-size:13px;color:#949b94}code{overflow-wrap:anywhere}</style><main class="wrap"><h1>${htmlEscape(title)}</h1>${content}</main></html>`;
   return response(doc, status, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     'X-Frame-Options': 'DENY',
   });
 }
@@ -174,6 +173,16 @@ function scopesFromJson(value: string): McpScope[] | undefined {
     if (!Array.isArray(parsed) || !parsed.every((scope): scope is string => typeof scope === 'string')) return undefined;
     const scopes = parseScopes(parsed.join(' '), []);
     return scopes ? scopes.filter((scope): scope is McpScope => scope !== 'offline_access') : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function oauthScopesFromJson(value: string): OAuthScope[] | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed) || !parsed.every((scope): scope is string => typeof scope === 'string')) return undefined;
+    return parseScopes(parsed.join(' '), []);
   } catch {
     return undefined;
   }
@@ -245,22 +254,16 @@ export function buildWalletSignInMessage(input: {
   ].join('\n');
 }
 
-function scriptJson(value: string): string {
-  return JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e').replaceAll('&', '\\u0026');
-}
-
 function htmlForm(requestUrl: URL, requestId: string, clientName: string, redirectUri: string, scopes: readonly McpScope[], walletNonce: string, resource: string, issuedAtMs: number, expiresAtMs: number): string {
   const scopeLabels: Record<McpScope, string> = {
     'mandate:read': 'Read mandate status on Monad Testnet',
     'mandate:transfer': 'Request transfers within a mandate’s onchain limits (MCP client confirmation may be required)',
     'mandate:propose': 'Generate a review-only mandate proposal with the configured model provider',
   };
-  const scopeItems = scopes.map((scope) => `<li>${htmlEscape(scopeLabels[scope])}</li>`).join('');
+  const scopeItems = scopes.map((scope) => `<li><label><input type="checkbox" name="granted_scope" value="${scope}"${scope === 'mandate:read' ? ' checked' : ''}> ${htmlEscape(scopeLabels[scope])}</label></li>`).join('');
   const origin = htmlEscape(requestUrl.origin);
   const escapedName = htmlEscape(clientName);
-  const signInPrefix = `${requestUrl.host} wants you to sign in with your Ethereum account:`;
-  const statement = `Connect ${clientName} to Mandate. This signature does not create a blockchain transaction.`;
-  return `<p><b>${escapedName}</b> is asking to connect to Mandate.</p><p>Use the wallet account you used when you created your Mandate permission. <b>You do not need to know or type your wallet address</b>—after you unlock and choose the account in your wallet app, Mandate reads its address automatically.</p><p>If you are new to Mandate, set up a wallet and create a permission first in the <a href="${origin}/#/workspace">Mandate workspace</a>. If this account has no permissions, go back and switch to the account that created them.</p><p>Requested access:</p><ul>${scopeItems}</ul><p class="muted">This sign-in verifies the wallet with a free message signature. It sends no transaction and never gives ${htmlEscape(clientName)} your wallet key.</p><form id="wallet-approval" method="post" action="${origin}/oauth/authorize"><input type="hidden" name="request_id" value="${htmlEscape(requestId)}"><input type="hidden" name="wallet_nonce" value="${htmlEscape(walletNonce)}"><input type="hidden" name="issued_at_ms" value="${issuedAtMs}"><input type="hidden" name="expires_at_ms" value="${expiresAtMs}"><input type="hidden" name="wallet_address"><input type="hidden" name="wallet_signature"><button id="connect-wallet" type="button">Continue with my wallet</button><p id="wallet-status" class="muted" role="status">Your wallet will show the account it is connecting. Review it, then approve the free signature.</p><p class="muted">If no wallet opens, use this sign-in page in a browser where your wallet app or extension is installed and unlocked. Keep ${htmlEscape(clientName)} signed in there to finish connecting.</p></form><script nonce="__CSP_NONCE__">(()=>{const button=document.getElementById('connect-wallet');const status=document.getElementById('wallet-status');const form=document.getElementById('wallet-approval');button.addEventListener('click',async()=>{button.disabled=true;status.textContent='Waiting for your wallet to show the account…';try{const provider=window.ethereum;if(!provider)throw new Error('No wallet was detected in this browser. Install or open an Ethereum-compatible wallet, then return here. If you are new to Mandate, create a wallet and permission in the Mandate workspace first.');const accounts=await provider.request({method:'eth_requestAccounts'});const address=Array.isArray(accounts)?accounts[0]:undefined;if(typeof address!=='string'||!/^0x[0-9a-fA-F]{40}$/.test(address))throw new Error('Your wallet did not return an account. Unlock it and try again.');const message=[${scriptJson(signInPrefix)},address,'',${scriptJson(statement)},'',${scriptJson(`URI: ${requestUrl.origin}`)},'Version: 1','Chain ID: 10143',${scriptJson(`Nonce: ${walletNonce}`)},${scriptJson(`Issued At: ${new Date(issuedAtMs).toISOString()}`)},${scriptJson(`Expiration Time: ${new Date(expiresAtMs).toISOString()}`)},'Resources:',${scriptJson(`- ${resource}`)}].join('\\n');const signature=await provider.request({method:'personal_sign',params:[message,address]});if(typeof signature!=='string'||!/^0x[0-9a-fA-F]{130}$/.test(signature))throw new Error('The wallet did not return a valid signature.');form.elements.namedItem('wallet_address').value=address;form.elements.namedItem('wallet_signature').value=signature;status.textContent='Wallet verified. Finishing connection…';form.requestSubmit();}catch(error){status.textContent=error instanceof Error?error.message:'Wallet sign-in did not complete.';button.disabled=false;}});})();</script>`;
+  return `<p><b>${escapedName}</b> is asking to connect to Mandate.</p><p>Sign in with the same account that owns your Mandate permissions. Your device can verify a passkey with Face ID, fingerprint, or PIN; Mandate selects the account automatically. No address or API key to copy.</p><p><b>Important:</b> a new passkey creates a new Mandate account. If you made your permission with an existing wallet, choose that wallet below so you sign in as its owner.</p><p>First time here? Create a passkey in the <a href="${origin}/#/workspace">Mandate workspace</a>, then return to this page. Passkeys need an authenticator with WebAuthn PRF support; otherwise use an existing EVM wallet.</p><p>Requested capabilities (choose at least one). Read status is selected by default; proposal and transfer remain off unless you select them.</p><ul>${scopeItems}</ul><p class="muted">Signing in is a free message signature. It sends no transaction. A passkey-derived software key stays in this browser session; Mandate never receives your biometric or signing key.</p><form id="wallet-approval" method="post" action="${origin}/oauth/authorize" data-origin="${htmlEscape(requestUrl.origin)}" data-resource="${htmlEscape(resource)}" data-client-name="${escapedName}"><input type="hidden" name="request_id" value="${htmlEscape(requestId)}"><input type="hidden" name="wallet_nonce" value="${htmlEscape(walletNonce)}"><input type="hidden" name="issued_at_ms" value="${issuedAtMs}"><input type="hidden" name="expires_at_ms" value="${expiresAtMs}"><input type="hidden" name="wallet_address"><input type="hidden" name="wallet_signature"><button id="create-passkey" type="button">Create a passkey</button><button id="unlock-passkey" type="button">Continue with my passkey</button><button id="connect-wallet" type="button">Use an existing wallet instead</button><p id="wallet-status" class="muted" role="status">Choose a passkey option. Your device will ask you to verify locally; Mandate never receives your biometric or passkey secret.</p></form><script type="module" src="/assets/oauth-approve.js"></script>`;
 }
 
 export async function handleOAuthRequest(request: Request, env: OAuthEnvironment): Promise<Response> {
@@ -350,6 +353,16 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
       return html('Authorization request expired', '<p>The registered client is no longer valid. Reconnect the client.</p>', 400);
     }
     const issuedAtMs = row.expires_at_ms - AUTHORIZATION_TTL_MS;
+    const requestedScopes = scopesFromJson(row.scopes_json);
+    const requestedOAuthScopes = oauthScopesFromJson(row.scopes_json);
+    const selectedScopeValues = (form.getAll('granted_scope')).filter((scope): scope is string => typeof scope === 'string');
+    const selectedScopes = parseScopes(selectedScopeValues.join(' '), []);
+    if (!requestedScopes || !requestedOAuthScopes || !selectedScopes || selectedScopes.length === 0 || selectedScopes.some((scope) => scope === 'offline_access' || !requestedScopes.includes(scope))) {
+      return html('Permission selection invalid', '<p>Choose only the permissions this client requested, then return to your AI client and reconnect.</p>', 400);
+    }
+    const grantedScopes: OAuthScope[] = requestedScopes.filter((scope) => selectedScopes.includes(scope));
+    if (requestedOAuthScopes.includes('offline_access')) grantedScopes.push('offline_access');
+    const grantedScopesJson = JSON.stringify(grantedScopes);
     const expectedMessage = buildWalletSignInMessage({ address: walletAddress, clientName: client.clientName, expiresAtMs: row.expires_at_ms,
       issuedAtMs, origin: url.origin, resource: row.resource, walletNonce: row.wallet_nonce });
     try {
@@ -363,7 +376,7 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
     const results = await database.batch([
       database.prepare('DELETE FROM oauth_authorization_requests WHERE request_id = ? AND expires_at_ms > ?').bind(sha256(requestId), Date.now()),
       database.prepare('INSERT INTO oauth_authorization_codes (code_hash, client_id, redirect_uri, code_challenge, scopes_json, resource, expires_at_ms, principal_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(sha256(code), row.client_id, row.redirect_uri, row.code_challenge, row.scopes_json, row.resource, codeExpires, walletAddress.toLowerCase()),
+        .bind(sha256(code), row.client_id, row.redirect_uri, row.code_challenge, grantedScopesJson, row.resource, codeExpires, walletAddress.toLowerCase()),
     ]);
     if (!hasChanges(results[0]) || !results[1]?.success) return html('Authorization request expired', '<p>Return to your MCP client and start the connection again.</p>', 400);
     const destination = new URL(row.redirect_uri);

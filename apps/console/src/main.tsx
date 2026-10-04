@@ -6,6 +6,7 @@ import { validateAuthorizationDraft } from './authorization.js';
 import { fetchMcpConnectionStatus, type McpConnectionStatus } from './mcp-status.js';
 import { registeredTaskCapabilities } from './capabilities.js';
 import { submitConversation, type ConversationTurn } from './conversation.js';
+import { createPasskeyAccount, explainPasskeyError, unlockPasskeyAccount, type PasskeyAccountSession } from './passkey-account.js';
 import './style.css';
 interface Provider { request(args: { method: string; params?: readonly string[] }): Promise<readonly string[] | string> }
 declare global { interface Window { ethereum?: Provider; __mandateRoot?: Root } }
@@ -74,6 +75,13 @@ function App(): React.JSX.Element {
   }, [page]);
   function goBack(): void { window.location.hash = previousPage === 'home' ? '#/' : `#/${previousPage}`; }
   const [account, setAccount] = React.useState<Address>();
+  const [passkeySession, setPasskeySession] = React.useState<PasskeyAccountSession>();
+  const passkeySessionRef = React.useRef<PasskeyAccountSession | undefined>(undefined);
+  const passkeySessionTimerRef = React.useRef<number | undefined>(undefined);
+  React.useEffect(() => () => {
+    if (passkeySessionTimerRef.current !== undefined) window.clearTimeout(passkeySessionTimerRef.current);
+    passkeySessionRef.current?.end();
+  }, []);
   const [records, setRecords] = React.useState<readonly RecordView[]>([]);
   const [task, setTask] = React.useState('');
   const [composerText, setComposerText] = React.useState('');
@@ -89,7 +97,7 @@ function App(): React.JSX.Element {
   const [agent, setAgent] = React.useState(''); const [recipient, setRecipient] = React.useState('');
   const [perCall, setPerCall] = React.useState(''); const [total, setTotal] = React.useState('');
   const [expiry, setExpiry] = React.useState(''); const [id, setId] = React.useState(''); const [deposit, setDeposit] = React.useState('');
-  const [notice, setNotice] = React.useState('Connect your wallet to read and manage onchain mandates.');
+  const [notice, setNotice] = React.useState('Start with a passkey. Your device verifies you and Mandate creates your account—no wallet address or extension to find.');
   const [busy, setBusy] = React.useState(false);
   const mcpEndpoint = import.meta.env.VITE_MANDATE_MCP_URL ?? 'https://mandate-console.pages.dev/mcp';
   const [mcpStatus, setMcpStatus] = React.useState<McpConnectionStatus>();
@@ -102,8 +110,40 @@ function App(): React.JSX.Element {
       if (typeof first !== 'string' || !isAddress(first)) throw new Error('No account');
       const network = await window.ethereum.request({ method: 'eth_chainId' });
       if (network !== '0x279f') await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: ['0x279f'] });
+      if (passkeySessionTimerRef.current !== undefined) window.clearTimeout(passkeySessionTimerRef.current);
+      passkeySessionRef.current?.end(); passkeySessionRef.current = undefined; setPasskeySession(undefined);
       setAccount(first); setNotice('Wallet connected to Monad Testnet.'); await refresh(first);
     } catch { setNotice('Wallet connection or network switch did not complete.'); }
+  }
+  async function connectPasskey(create: boolean): Promise<void> {
+    try {
+      const { session } = create ? await createPasskeyAccount() : await unlockPasskeyAccount();
+      if (passkeySessionTimerRef.current !== undefined) window.clearTimeout(passkeySessionTimerRef.current);
+      passkeySessionRef.current?.end(); passkeySessionRef.current = session; setPasskeySession(session);
+      passkeySessionTimerRef.current = window.setTimeout(() => {
+        if (passkeySessionRef.current !== session) return;
+        session.end(); passkeySessionRef.current = undefined; passkeySessionTimerRef.current = undefined;
+        setPasskeySession(undefined); setAccount(undefined); setRecords([]);
+        setNotice('Passkey session ended after 15 minutes. Reconnect your passkey to continue.');
+      }, 15 * 60 * 1000);
+      setAccount(session.address); setNotice('Passkey connected. Your account is ready; no browser wallet extension or address entry was needed.');
+      await refresh(session.address);
+    } catch (error) {
+      setNotice(explainPasskeyError(error));
+    }
+  }
+  function disconnectAccount(): void {
+    if (passkeySessionTimerRef.current !== undefined) window.clearTimeout(passkeySessionTimerRef.current);
+    passkeySessionTimerRef.current = undefined;
+    passkeySessionRef.current?.end(); passkeySessionRef.current = undefined; setPasskeySession(undefined);
+    setAccount(undefined); setRecords([]); setNotice('Mandate account disconnected. The in-memory signing session has ended.');
+  }
+  function walletClientFor(owner: Address) {
+    if (passkeySession && passkeySession.address.toLowerCase() === owner.toLowerCase()) {
+      return createWalletClient({ account: passkeySession.account, chain, transport: http() });
+    }
+    if (!window.ethereum) throw new Error('Reconnect the passkey or connect your existing wallet before confirming.');
+    return createWalletClient({ account: owner, chain, transport: custom(window.ethereum) });
   }
   async function refresh(owner = account): Promise<void> {
     if (!owner || !contractAddress) { setNotice('Configure the contract address and connect a wallet.'); return; }
@@ -173,13 +213,13 @@ function App(): React.JSX.Element {
     setNotice('Review the permission carefully. Authorizing it does not send a payment.');
   }
   async function authorize(): Promise<void> {
-    if (!account || !window.ethereum || !contractAddress) { setNotice('Connect your wallet before authorizing. No permission has been created.'); return; }
+    if (!account || (!passkeySession && !window.ethereum) || !contractAddress) { setNotice('Continue with a passkey or connect your existing wallet before authorizing. No permission has been created.'); return; }
     if (!task.trim()) { setNotice('Describe the task in the conversation first.'); setReviewOpen(false); return; }
     const validation = validateAuthorizationDraft({ task, agent, recipient, perCallMon: perCall, totalMon: total, expiresAt: expiry }, Math.floor(Date.now() / 1000));
     if (!validation.ok) { setNotice(validation.message); setReviewOpen(false); return; }
     setBusy(true);
     try {
-      const wallet = createWalletClient({ account, chain, transport: custom(window.ethereum) });
+      const wallet = walletClientFor(account);
       const bytes = crypto.getRandomValues(new Uint8Array(32)); const salt = ('0x' + Array.from(bytes, (x) => x.toString(16).padStart(2, '0')).join('')) as Hex;
       const policyHash = keccak256(stringToHex(JSON.stringify({ agent: validation.agent, recipient: validation.recipient, perCall, total, expiresAt: validation.expiresAt.toString(), version: 1 })));
       const tx = await wallet.writeContract({ address: contractAddress, abi: mandateVaultAbi, functionName: 'createMandate', args: [validation.agent, validation.recipient, validation.perCallWei, validation.totalWei, validation.expiresAt, policyHash, salt] });
@@ -191,22 +231,22 @@ function App(): React.JSX.Element {
   }
   async function fund(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!account || !window.ethereum || !contractAddress || !/^0x[0-9a-fA-F]{64}$/.test(id)) { setNotice('Connect wallet and enter a valid mandate ID.'); return; }
-    setBusy(true); try { const wallet = createWalletClient({ account, chain, transport: custom(window.ethereum) });
+    if (!account || (!passkeySession && !window.ethereum) || !contractAddress || !/^0x[0-9a-fA-F]{64}$/.test(id)) { setNotice('Continue with a passkey or connect a wallet and enter a valid mandate ID.'); return; }
+    setBusy(true); try { const wallet = walletClientFor(account);
       const tx = await wallet.writeContract({ address: contractAddress, abi: mandateVaultAbi, functionName: 'fundMandate', args: [id as Hex], value: parseEther(deposit) });
       await reader.waitForTransactionReceipt({ hash: tx }); setNotice('Funding transaction mined.'); await refresh(account);
     } catch { setNotice('Funding did not complete. Check budget and wallet balance.'); } finally { setBusy(false); }
   }
   async function revoke(mandateId: Hex): Promise<void> {
-    if (!account || !window.ethereum || !contractAddress) return; setBusy(true);
-    try { const wallet = createWalletClient({ account, chain, transport: custom(window.ethereum) });
+    if (!account || (!passkeySession && !window.ethereum) || !contractAddress) return; setBusy(true);
+    try { const wallet = walletClientFor(account);
       const tx = await wallet.writeContract({ address: contractAddress, abi: mandateVaultAbi, functionName: 'revokeMandate', args: [mandateId] });
       await reader.waitForTransactionReceipt({ hash: tx }); setNotice('Revocation mined. Future transfers are blocked onchain.'); await refresh(account);
     } catch { setNotice('Revocation did not complete. Check the wallet transaction.'); } finally { setBusy(false); }
   }
   return <div className={`experience route-${page}`} id="top">
     <div className="scroll-progress" aria-hidden="true"/><div className="ambient-scene" aria-hidden="true"><div className="scene-grid"/><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="core-object"><div className="core-face face-front"/><div className="core-face face-side"/><div className="core-face face-top"/><div className="core-light"/></div><div className="shard shard-left"/><div className="shard shard-right"/><div className="shard shard-low"/><div className="scene-glow"/></div>
-    <nav className="site-nav" aria-label="Main navigation"><a className="site-brand" href="#/" aria-label="Mandate home">M<span>—</span></a><div className="nav-links">{page === 'home' && <><a href="#story">The Idea</a><a href="#how">How It Works</a></>}<a href="#/workspace">Workspace</a><a href="#/connections">MCP</a><a href="#/space">Space <span>↗</span></a></div><button className="nav-wallet" type="button" onClick={() => void connect()}>{account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'} <span>↗</span></button></nav>
+    <nav className="site-nav" aria-label="Main navigation"><a className="site-brand" href="#/" aria-label="Mandate home">M<span>—</span></a><div className="nav-links">{page === 'home' && <><a href="#story">The Idea</a><a href="#how">How It Works</a></>}<a href="#/workspace">Workspace</a><a href="#/connections">MCP</a><a href="#/space">Space <span>↗</span></a></div><button className="nav-wallet" type="button" onClick={() => void connectPasskey(false)}>{account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Continue with passkey'} <span>↗</span></button></nav>
     <main className="experience-main">
       <section className="landing" aria-labelledby="landing-title"><div className="landing-overline"><span className="status-pulse"/> AUTONOMY, WITH BOUNDARIES <span className="landing-index">MONAD TESTNET · 01</span></div><div className="landing-center"><span className="landing-orbit-label label-left">POLICY / 001</span><h1 id="landing-title">mandate<span className="title-mark">.</span></h1><p>Permission for agents.<br/><span>Control that stays yours.</span></p><a className="landing-cta" href="#story">DISCOVER THE PROTOCOL <span>↓</span></a><span className="landing-orbit-label label-right">EST. FOR THE OPEN ECONOMY</span></div><div className="landing-foot"><span>PROGRAMMABLE ACCESS ON MONAD</span><a href="#story">SCROLL TO EXPLORE <span>↓</span></a><span>01 — 03</span></div></section>
       <section className="story-section" id="story" aria-labelledby="story-title"><div className="section-meta" data-reveal><span>01 / THE IDEA</span><span>SMALL RULES. REAL AGENCY.</span></div><div className="story-copy" data-reveal><p className="eyebrow">A NEW KIND OF DELEGATION</p><h2 id="story-title"><span className="headline-line"><span>Let your agents</span></span><span className="headline-line"><span>move with purpose.</span></span><span className="headline-line"><span className="muted-line">Not unlimited power.</span></span></h2><p className="story-description">Mandate turns a task into a clear, bounded permission. Set who can act, where value can go, how much can move, and when authority ends — then register that rule on Monad.</p><a className="text-link" href="#how">SEE HOW IT WORKS <span>↓</span></a></div><div className="story-graphic" aria-hidden="true" data-reveal><div className="graphic-ring ring-a"/><div className="graphic-ring ring-b"/><div className="graphic-core"><span>M</span></div><div className="graphic-node node-a">01<br/><b>INTENT</b></div><div className="graphic-node node-b">02<br/><b>BOUNDARY</b></div><div className="graphic-node node-c">03<br/><b>CONTROL</b></div><span className="graphic-caption">A POLICY, MADE LEGIBLE</span></div><div className="story-bottom"><span>THE AGENT ACTS INSIDE THE RULE.</span><span>YOU KEEP THE KEY.</span></div></section>
@@ -215,6 +255,7 @@ function App(): React.JSX.Element {
     <header><span>Workspace <i>/</i> Agent access</span><div><button className="header-route-action" type="button" onClick={goBack}>← Back</button><a className="header-route-action" href="#/">Home</a><span className="network"><i/>Monad Testnet</span></div></header>
     <section className="hero"><div><p className="kicker">MANDATE WORKSPACE · MONAD TESTNET</p><h1>What would you like<br/><em>your agent to handle?</em></h1><p className="lede">Describe the work in your own words. Mandate will keep the conversation open and show exactly which permissions this build can enforce.</p></div><div className="stamp"><span>POLICY NETWORK</span><b>MONAD</b><small>TESTNET · 10143</small></div></section>
     <div className="notice" role="status"><i/>{notice}</div>
+    <section className="identity-actions" aria-label="Choose how to connect your Mandate account"><div><b>{account ? 'ACCOUNT CONNECTED' : 'START WITHOUT AN EXTENSION'}</b><p>{account ? `${passkeySession ? 'Passkey' : 'Wallet'} account ${account.slice(0, 8)}…${account.slice(-6)}. Keep the same account when connecting your AI client.` : 'Create a passkey or use one you already have. Face ID, fingerprint, or device PIN replaces copying addresses and managing a separate wallet extension.'}</p></div><div className="identity-buttons"><button type="button" className="primary" onClick={() => void connectPasskey(true)} disabled={busy}>Create passkey</button><button type="button" className="secondary" onClick={() => void connectPasskey(false)} disabled={busy}>Use my passkey</button><button type="button" className="text-button" onClick={() => void connect()} disabled={busy}>Use an existing wallet</button>{account && <button type="button" className="text-button" onClick={disconnectAccount} disabled={busy}>{passkeySession ? 'Lock account' : 'Disconnect'}</button>}</div><small>A new passkey creates a new account; use the same account later for MCP sign-in. To manage an existing permission, connect the wallet/passkey account that created it. Passkeys need WebAuthn PRF support. Onchain actions require testnet MON for gas.</small></section>
     <section className="task-panel conversation-panel" aria-labelledby="conversation-title">
       <div className="conversation-heading">
         <div className="conversation-agent"><span className="conversation-mark">M<span>·</span></span><div><p className="kicker">CONVERSATION</p><h2 id="conversation-title">New conversation</h2></div></div>
@@ -259,9 +300,9 @@ function App(): React.JSX.Element {
           <label htmlFor="mcp-endpoint">HOSTED MCP URL<input id="mcp-endpoint" value={mcpEndpoint} readOnly aria-label="Hosted Mandate MCP URL"/></label>
           <button type="button" className="copy-config mcp-url-copy" onClick={() => { void navigator.clipboard.writeText(mcpEndpoint).then(() => { setMcpCopied(true); setNotice('Mandate MCP URL copied. Add it as a remote Streamable HTTP server in your AI client.'); }).catch(() => setNotice('Clipboard access was blocked. Select and copy the URL manually.')); }}>{mcpCopied ? 'COPIED ✓' : 'COPY URL'}</button>
         </div>
-        <p className="mcp-explanation">Add a <b>remote MCP server</b> and paste this URL. At sign-in, connect the same wallet account you used to create your Mandate permission. You do not need to find or type its address—your wallet shows the account and Mandate reads it automatically. Confirm the free message signature; it sends no transaction and never shares your wallet key.</p>
+        <p className="mcp-explanation">Add a <b>remote MCP server</b> and paste this URL. At sign-in, use your Mandate passkey—your device verifies you and picks the account automatically. No address, API key, or browser extension to find. Passkeys require WebAuthn PRF support; if your authenticator does not support it, use an existing EVM wallet instead. Sign-in is a free message signature, not a transaction. Choose read-only status, review-only proposal, or transfer access only when you need it.</p>
         <div className="mcp-status-row"><div className="mcp-status-copy" aria-live="polite"><span className={mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'mcp-status-dot is-connected' : 'mcp-status-dot is-ready') : 'mcp-status-dot') : 'mcp-status-dot is-unknown'}/><div><strong>{mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'CONNECTED · RECENT AUTHENTICATED REQUEST' : 'SERVICE ONLINE · WAITING FOR CLIENT') : 'SERVICE NEEDS CONFIGURATION') : 'SERVICE STATUS NOT CHECKED'}</strong><small>{mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'A client authenticated within the last five minutes.' : 'The hosted endpoint is ready. Register it in your client and complete its handshake.') : 'The hosted authorization service is not ready. Try again later.') : 'Checks endpoint readiness. A client handshake is needed to show recent activity.'}</small></div></div><button type="button" className="mcp-check-button" onClick={() => void checkMcpConnection()} disabled={mcpStatusBusy}>{mcpStatusBusy ? 'CHECKING…' : 'CHECK SERVICE'}</button></div>
-        <p className="mcp-status-disclaimer">The same OAuth connection works across clients that support remote MCP authentication. Access is tied to the wallet you connect; mandate reads and transfer requests are limited to mandates owned by that wallet. Your AI client may ask you to confirm a transfer separately.</p>
+        <p className="mcp-status-disclaimer">The same OAuth connection works across clients that support remote MCP authentication. Access is tied to your Mandate account; read and transfer requests are limited to mandates owned by that account. Proposals are review-only; a proposal does not change a policy or send a transaction. The AI client may ask separately before a transfer request.</p>
       </div>
     </section>
     </main></div>
