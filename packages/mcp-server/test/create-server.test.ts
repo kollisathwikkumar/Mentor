@@ -4,11 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { createMandateMcpServer } from '../src/create-server.js';
 
 describe('MCP server provider configuration', () => {
-  it('does not activate a model proposal tool from legacy NVIDIA environment values', async () => {
+  it('does not expose a proposal tool from leftover provider environment values', async () => {
     const server = createMandateMcpServer({
-      NVIDIA_API_KEY: 'legacy-test-key',
-      NVIDIA_MODEL: 'legacy/test-model',
-      NVIDIA_API_ENDPOINT: 'https://example.invalid/v1/chat/completions',
+      MODEL_API_KEY: 'legacy-test-key',
+      MODEL_NAME: 'legacy/test-model',
+      MODEL_ENDPOINT: 'https://example.invalid/v1/chat/completions',
       MONAD_RPC_URL: 'https://rpc.example.invalid',
       MONAD_CHAIN_ID: '10143',
       MANDATE_CONTRACT_ADDRESS: '0x0000000000000000000000000000000000000001',

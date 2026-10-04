@@ -7,7 +7,7 @@
 | Milestone | Weight | Status | Evidence |
 |---|---:|---|---|
 | Contract, policy engine, deterministic validation, and local test coverage | 25% | Complete | 15 Foundry tests; 43 TypeScript tests; local Anvil allow/deny/revoke end-to-end coverage. |
-| Provider/model proposal integration | 20% | Paused | The NVIDIA adapter, runtime configuration, and proposal tool are removed from the active code path. Reconnect after the user supplies the new provider key and endpoint/model details. |
+| Provider/model proposal integration | 20% | Paused | The provider-specific adapter, runtime configuration, and proposal tool are removed from the active code path. Reconnect after the user supplies the new provider key and endpoint/model details. |
 | Monad Testnet deployment and code verification | 20% | Complete | Chain ID 10143; contract `0x77065a818481ceebba93e79988bef9fd646f457d`; deployment block `68065182`; 5,910 bytes of bytecode. |
 | Live mandate create/fund and backend MCP status read | 15% | Complete | Mandate `0x36a730095a8f287f71184280d67d91c37cc3dd9bc4eebb3cf90908da8067dd4e`; 0.02 MON deposited; MCP returned active status and nonce 0. |
 | Live bounded transfer and live negative-path/revoke verification | 15% | Complete | MCP submitted a 0.01 MON transfer; receipt/event/balance and mandate state verified. Over-limit and revoked requests were denied; 0.01 MON remainder was withdrawn after revocation. |
