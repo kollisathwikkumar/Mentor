@@ -113,7 +113,7 @@ export class ViemMandatePort implements MandatePort {
   }
 }
 
-export function createViemPort(env: NodeJS.ProcessEnv): ViemMandatePort {
+export function createViemPort(env: Readonly<Record<string, string | undefined>>): ViemMandatePort {
   const rpcUrl = env.MONAD_RPC_URL;
   const contractAddress = env.MANDATE_CONTRACT_ADDRESS;
   const agentPrivateKey = env.MANDATE_AGENT_PRIVATE_KEY;
