@@ -31,6 +31,7 @@
   "devDependencies": {
     "@foundry-rs/anvil": "^1.7.1",
     "@foundry-rs/forge": "^1.7.1",
+    "@types/node": "^24.19.1",
     "@vitest/coverage-v8": "^5.0.3",
     "typescript": "^5.9.3",
     "vitest": "^5.0.3",
