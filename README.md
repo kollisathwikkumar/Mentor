@@ -12,7 +12,7 @@ The model is an untrusted proposer. The policy compiler validates and normalizes
 - `packages/model-adapter`: NVIDIA NIM chat completions adapter with HTTPS validation, input/output bounds, timeout, server-only key handling, and response schema validation.
 - `packages/mandate-sdk`: Monad Testnet viem reader and EIP-712 signing/submission path.
 - `packages/mcp-server`: stdio tool `propose_mandate` returns review-only output; chain status/transfer tools are registered only when chain config is present. Codex is configured to expose `propose_mandate`, `get_mandate_status`, and `request_bounded_transfer` with prompt approval; restart Codex to reload the allowlist.
-- `apps/console`: wallet connect, create/fund/revoke actions, and records read from contract state.
+- `apps/console`: wallet connect, create/fund/revoke actions, records read from contract state, and local MCP setup commands/configuration for Codex, Cursor, and Claude Code.
 
 ## Local setup
 
@@ -30,6 +30,12 @@ npm audit
 ```
 
 With `NVIDIA_API_KEY` and `NVIDIA_MODEL` set in ignored `.env.local`, run `npm run test:model-mcp:live` to build and call the review-only proposal tool over MCP stdio using NVIDIA inference. This live test exposes only `propose_mandate`; it does not submit a chain transaction.
+
+### Connect an agent from the console
+
+Open the workspace and use **Connect an AI agent**. Select Codex, Cursor, or Claude Code, enter the absolute path to this repository, then copy the generated command/config into that client and restart it. Confirm the tools inside the client (`codex mcp list`, Cursor's Agent tools, or `/mcp` in Claude Code).
+
+The webpage does not silently edit another application’s settings or claim a live connection: the selected agent client must be configured and restarted on the same machine where this repository and its dependencies are installed. Remote hosted agent sessions cannot launch this local stdio process; they would need a separately deployed Streamable HTTP endpoint with authentication, user isolation, and credential handling. Server tools are conditional on backend configuration. Keep provider and dedicated agent signer keys in ignored `.env.local`, never in browser storage or copied MCP config. MCP connectivity does not make unrelated agent actions enforceable; this build's enforced action scope remains bounded native MON transfers.
 
 The current test deployment is on Monad Testnet (chain ID `10143`) at `0x77065a818481ceebba93e79988bef9fd646f457d` (deployment block `68065182`). `npm run deploy:testnet` checks the RPC chain ID, refuses non-10143 networks and pre-existing contract addresses, verifies deployed bytecode, and writes the contract address back to `.env.local`. Test-only deployer and agent keys are stored in ignored `.env.local`; do not send private keys in chat.
 
