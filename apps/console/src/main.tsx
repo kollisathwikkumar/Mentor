@@ -13,6 +13,37 @@ const chain = defineChain({ id: 10143, name: 'Monad Testnet', nativeCurrency: { 
 const reader = createPublicClient({ chain, transport: http() });
 interface RecordView { id: Hex; recipient: Address; total: bigint; spent: bigint; deposited: bigint; active: boolean }
 function App(): React.JSX.Element {
+  React.useEffect(() => {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const revealItems = document.querySelectorAll<HTMLElement>('[data-reveal]');
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) { entry.target.classList.add('is-visible'); observer.unobserve(entry.target); }
+      }
+    }, { threshold: 0.16 });
+    revealItems.forEach((item) => observer.observe(item));
+    let frame = 0;
+    const updatePointer = (event: PointerEvent): void => {
+      if (event.pointerType !== 'mouse') return;
+      const x = ((event.clientX / Math.max(1, window.innerWidth)) - 0.5) * 2;
+      const y = ((event.clientY / Math.max(1, window.innerHeight)) - 0.5) * 2;
+      document.documentElement.style.setProperty('--pointer-x', `${(x * 26).toFixed(1)}px`);
+      document.documentElement.style.setProperty('--pointer-y', `${(y * 18).toFixed(1)}deg`);
+    };
+    const updateScroll = (): void => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+        document.documentElement.style.setProperty('--scroll-progress', String(window.scrollY / max));
+      });
+    };
+    if (!reduceMotion) {
+      window.addEventListener('scroll', updateScroll, { passive: true }); updateScroll();
+      if (window.matchMedia('(pointer: fine)').matches) window.addEventListener('pointermove', updatePointer, { passive: true });
+    }
+    return () => { observer.disconnect(); window.removeEventListener('scroll', updateScroll); window.removeEventListener('pointermove', updatePointer); if (frame) window.cancelAnimationFrame(frame); };
+  }, []);
   const [account, setAccount] = React.useState<Address>();
   const [records, setRecords] = React.useState<readonly RecordView[]>([]);
   const [task, setTask] = React.useState(''); const [policyBuilderOpen, setPolicyBuilderOpen] = React.useState(false);
@@ -92,7 +123,14 @@ function App(): React.JSX.Element {
       await reader.waitForTransactionReceipt({ hash: tx }); setNotice('Revocation mined. Future transfers are blocked onchain.'); await refresh(account);
     } catch { setNotice('Revocation did not complete. Check the wallet transaction.'); } finally { setBusy(false); }
   }
-  return <div className="shell"><aside className="rail"><div className="brand">M<span>.</span></div><small>WORKSPACE</small><div className="nav-active">▦ &nbsp; Agent access</div><div className="nav-muted">⌁ &nbsp; Activity</div><div className="rail-foot">POLICY NETWORK<br/><b>MONAD TESTNET</b></div></aside><main>
+  return <div className="experience" id="top">
+    <div className="scroll-progress" aria-hidden="true"/><div className="ambient-scene" aria-hidden="true"><div className="scene-grid"/><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="core-object"><div className="core-face face-front"/><div className="core-face face-side"/><div className="core-face face-top"/><div className="core-light"/></div><div className="shard shard-left"/><div className="shard shard-right"/><div className="shard shard-low"/><div className="scene-glow"/></div>
+    <nav className="site-nav" aria-label="Main navigation"><a className="site-brand" href="#top" aria-label="Mandate home">M<span>—</span></a><div className="nav-links"><a href="#story">The idea</a><a href="#how">How it works</a><a href="#workspace">Workspace <span>↗</span></a></div><button className="nav-wallet" type="button" onClick={() => void connect()}>{account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'} <span>↗</span></button></nav>
+    <main className="experience-main">
+      <section className="landing" aria-labelledby="landing-title"><div className="landing-overline"><span className="status-pulse"/> AUTONOMY, WITH BOUNDARIES <span className="landing-index">MONAD TESTNET · 01</span></div><div className="landing-center"><span className="landing-orbit-label label-left">POLICY / 001</span><h1 id="landing-title">mandate<span className="title-mark">.</span></h1><p>Permission for agents.<br/><span>Control that stays yours.</span></p><a className="landing-cta" href="#story">DISCOVER THE PROTOCOL <span>↓</span></a><span className="landing-orbit-label label-right">EST. FOR THE OPEN ECONOMY</span></div><div className="landing-foot"><span>PROGRAMMABLE ACCESS ON MONAD</span><a href="#story">SCROLL TO EXPLORE <span>↓</span></a><span>01 — 03</span></div></section>
+      <section className="story-section" id="story" aria-labelledby="story-title"><div className="section-meta" data-reveal><span>01 / THE IDEA</span><span>SMALL RULES. REAL AGENCY.</span></div><div className="story-copy" data-reveal><p className="eyebrow">A NEW KIND OF DELEGATION</p><h2 id="story-title"><span className="headline-line"><span>Let your agents</span></span><span className="headline-line"><span>move with purpose.</span></span><span className="headline-line"><span className="muted-line">Not unlimited power.</span></span></h2><p className="story-description">Mandate turns a task into a clear, bounded permission. Set who can act, where value can go, how much can move, and when authority ends — then register that rule on Monad.</p><a className="text-link" href="#how">SEE HOW IT WORKS <span>↓</span></a></div><div className="story-graphic" aria-hidden="true" data-reveal><div className="graphic-ring ring-a"/><div className="graphic-ring ring-b"/><div className="graphic-core"><span>M</span></div><div className="graphic-node node-a">01<br/><b>INTENT</b></div><div className="graphic-node node-b">02<br/><b>BOUNDARY</b></div><div className="graphic-node node-c">03<br/><b>CONTROL</b></div><span className="graphic-caption">A POLICY, MADE LEGIBLE</span></div><div className="story-bottom"><span>THE AGENT ACTS INSIDE THE RULE.</span><span>YOU KEEP THE KEY.</span></div></section>
+      <section className="how-section" id="how" aria-labelledby="how-title"><div className="section-meta" data-reveal><span>02 / HOW IT WORKS</span><span>DEFINE → AUTHORIZE → MANAGE</span></div><div className="how-heading" data-reveal><p className="eyebrow">THE MECHANISM</p><h2 id="how-title"><span className="headline-line"><span>A simple boundary</span></span><span className="headline-line"><span>for complex work.</span></span></h2><p>One fixed-recipient native MON policy, with onchain limits and an expiry you choose.</p></div><div className="steps-line" aria-label="Three steps"><article className="step-card" data-reveal><span className="step-number">01</span><div className="step-glyph glyph-task">↗</div><h3>Describe the job</h3><p>Start with what you want your agent to handle. Your task note stays in this browser.</p><span className="step-foot">INTENT, IN YOUR WORDS</span></article><article className="step-card" data-reveal><span className="step-number">02</span><div className="step-glyph glyph-rule">⌁</div><h3>Set the boundary</h3><p>Choose the signer, a single destination, per-action and total MON limits, and an expiry.</p><span className="step-foot">NARROW BY DESIGN</span></article><article className="step-card" data-reveal><span className="step-number">03</span><div className="step-glyph glyph-key">◇</div><h3>Authorize onchain</h3><p>Review the rule, then approve its registration with your wallet. This step does not make a payment.</p><span className="step-foot">YOU STAY IN CONTROL</span></article></div><div className="how-note" data-reveal><span>TESTNET CAPABILITY</span><p>Mandate currently registers fixed-recipient MON access policies. Escrow funding is separate; an agent execution connector is not enabled in this console yet.</p></div><a className="workspace-link" href="#workspace">OPEN THE MANDATE WORKSPACE <span>↘</span></a></section>
+      <div className="shell"><aside className="rail"><div className="brand">M<span>.</span></div><small>WORKSPACE</small><div className="nav-active">▦ &nbsp; Agent access</div><div className="nav-muted">⌁ &nbsp; Activity</div><div className="rail-foot">POLICY NETWORK<br/><b>MONAD TESTNET</b></div></aside><main id="workspace" className="workspace">
     <header><span>Workspace <i>/</i> Agent access</span><div><span className="network"><i/>Monad Testnet</span><button className="wallet" onClick={() => void connect()}>{account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'}</button></div></header>
     <section className="hero"><div><p className="kicker">AGENT AUTHORIZATION <span>01 / 03</span></p><h1>Delegate the work.<br/><em>Keep control of access.</em></h1><p className="lede">Start with the outcome you want. Then define the narrow permission an agent may use. Wallet approval registers that permission—it does not make a payment.</p></div><div className="stamp"><span>POLICY NETWORK</span><b>MONAD</b><small>TESTNET · 10143</small></div></section>
     <div className="notice" role="status"><i/>{notice}<button onClick={() => void refresh()} disabled={busy}>Refresh ↗</button></div>
@@ -114,7 +152,7 @@ function App(): React.JSX.Element {
       {records.length === 0 ? <div className="empty"><div className="monogram">M</div><div><b>No agent permissions for this wallet</b><p>Approved access will appear here after you authorize it.</p></div><small>CHAIN VERIFIED · 10143</small></div> : records.map((item) => <article className="record" key={item.id}><div><small>ACCESS ID</small><code>{item.id.slice(0, 10)}…{item.id.slice(-8)}</code></div><div><small>FIXED DESTINATION</small><code>{item.recipient.slice(0, 6)}…{item.recipient.slice(-4)}</code></div><div><small>USED / TOTAL AUTHORITY</small><b>{formatEther(item.spent)} <i>/ {formatEther(item.total)} MON</i></b></div><div><small>ESCROW AVAILABLE</small><b>{formatEther(item.deposited)} MON</b></div><div><i className={item.active ? 'active-dot' : 'off-dot'}/>{item.active ? 'Active' : 'Revoked'}</div>{item.active && <button className="revoke" onClick={() => void revoke(item.id)} disabled={busy}>Revoke access</button>}</article>)}
     </section><footer><span>MANDATE · AGENT ACCESS CONTROL</span><span>POLICY IS ENFORCED ON MONAD TESTNET <i>●</i></span></footer>
     {reviewOpen && <div className="modal-backdrop"><section className="review-sheet" role="dialog" aria-modal="true" aria-labelledby="review-title"><p className="kicker">STEP 03 · HUMAN REVIEW</p><h2 id="review-title">Review agent access</h2><p className="review-intro">Confirm the outcome and exact boundaries before your wallet registers this permission.</p><dl className="review-grid"><div><dt>Task</dt><dd>{task}</dd></div><div><dt>Allowed capability</dt><dd>Pay native MON to one fixed destination</dd></div><div><dt>Agent signer</dt><dd>{agent}</dd></div><div><dt>Fixed destination</dt><dd>{recipient}</dd></div><div><dt>Per-action maximum</dt><dd>{perCall} MON</dd></div><div><dt>Total authority</dt><dd>{total} MON</dd></div><div><dt>Expires</dt><dd>{new Date(expiry).toLocaleString()}</dd></div></dl><div className="review-note"><b>No payment happens here.</b> Wallet confirmation records this access policy on Monad. Escrow funding and any later agent action are separate.</div><div className="review-actions"><button className="secondary" type="button" onClick={() => setReviewOpen(false)}>Edit policy</button>{!account && <button className="secondary" type="button" onClick={() => void connect()}>Connect wallet</button>}<button className="primary" type="button" onClick={() => void authorize()} disabled={!account || busy}>{busy ? 'Waiting for wallet…' : 'Authorize agent access'} <b>↗</b></button></div></section></div>}
-  </main></div>;
+  </main></div></main></div>;
 }
 const mount = document.getElementById('root'); if (!mount) throw new Error('Missing React mount element');
 const root = window.__mandateRoot ?? createRoot(mount);
