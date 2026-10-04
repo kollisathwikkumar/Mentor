@@ -58,3 +58,19 @@ No Critical or High issue was identified in the reviewed local path. The local A
 **Validation:** `npm test` passed 87 tests; `npm run typecheck` passed; `npm run build --workspace @mandate/console` passed; `npm run audit:secrets` passed; `npm audit --omit=dev` reported 0 vulnerabilities; `npm run test:remote-mcp:local` passed actual Pages Functions + local D1 with bearer auth, OAuth DCR, PKCE exchange, read-only scoped tool list, refresh rotation, replay rejection, status, and existing no-transaction chain denial checks. Remote D1 migration `0002_mcp_oauth.sql` applied successfully. Hosted end-to-end verification remains the release/deploy gate.
 
 **Review status:** PASS WITH TRACKED MVP LIMITATIONS (single-operator shared-token bootstrap; rate limiting for public DCR; vendor UI acceptance per plan/client; third-party audit before production-value use).
+
+## OAuth wallet identity follow-up — 2026-10-05
+
+The reported Claude approval error was caused by rejecting the OAuth POST whenever its browser `Origin` differed from the Mandate origin. Embedded OAuth clients may submit from their own browser origin. Removed that brittle check; the authorization form now requires the one-time request ID, a 10-minute nonce-bound wallet message signature, registered redirect, and PKCE-bound authorization code. The consent UI no longer requests the service's operator bearer secret.
+
+OAuth access and refresh tokens are bound to the signing wallet. Read and transfer handlers compare the live mandate principal to the OAuth principal before exposing status or submitting a transfer; operator bearer access remains an explicit service-level path. The approval page has a per-response CSP nonce, escapes untrusted dynamic data for both HTML and script contexts, and tells the user the wallet signature is free and sends no transaction. Client-supplied Origin mismatch is deliberately accepted only on OAuth approval; strict browser CORS origin checks remain on the MCP resource endpoint.
+
+| OWASP category | Follow-up | Evidence / residual |
+|---|---|---|
+| A01 Broken access control | Improved | OAuth has per-wallet principal isolation and scoped tools; operator bearer remains an admin/test credential. |
+| A02 Cryptographic failures | Pass | Random one-time nonce; EIP-191 message signature recovered with viem; request/code/token hashes at rest; PKCE S256. |
+| A03 Injection / XSS | Pass | SQL remains parameterized; user-provided client name is normalized, HTML-escaped, and JS string values are escaped for script context; nonce CSP. |
+| A04 Insecure design / CSRF | Pass with residual | No Origin equality dependency. Approval requires client-specific nonce signature, 10-minute request, one-time consumption, registered redirect, and PKCE. Public DCR still needs production rate limiting. |
+| A05 Misconfiguration | Pending deployment | D1 migration `0003_oauth_wallet_identity.sql` and updated Pages bundle must both be deployed before hosted OAuth works. |
+
+**Validation planned:** full release gate, local Pages + D1 flow including an `Origin: https://claude.ai` POST, wallet signature/PKCE exchange, scoped MCP tool list, and Scrapling re-fetch of hosted onboarding after deployment.

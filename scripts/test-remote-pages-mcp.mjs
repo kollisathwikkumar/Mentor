@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { privateKeyToAccount } from 'viem/accounts';
+import { buildWalletSignInMessage } from '../packages/mcp-server/dist/oauth.js';
 
 const baseUrl = 'http://127.0.0.1:8788';
 const endpoint = `${baseUrl}/mcp`;
@@ -93,11 +95,29 @@ try {
   const authorizeHtml = await authorizeResponse.text();
   const requestId = authorizeHtml.match(/name="request_id" value="([A-Za-z0-9_-]+)"/)?.[1];
   assert.ok(requestId, 'OAuth authorize page should issue a short-lived request identifier.');
-  const approvalResponse = await fetch(`${baseUrl}/oauth/authorize`, {
-    method: 'POST', headers: { origin: baseUrl, 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ request_id: requestId, access_token: bearer }), redirect: 'manual',
+  assert.match(authorizeHtml, /Connect wallet and approve/);
+  assert.doesNotMatch(authorizeHtml, /Mandate access token/);
+  const field = (name) => authorizeHtml.match(new RegExp(`name="${name}" value="([^"]+)"`))?.[1];
+  const walletNonce = field('wallet_nonce');
+  const issuedAtMs = Number(field('issued_at_ms'));
+  const expiresAtMs = Number(field('expires_at_ms'));
+  assert.ok(walletNonce && Number.isFinite(issuedAtMs) && Number.isFinite(expiresAtMs));
+  const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
+  const walletMessage = buildWalletSignInMessage({
+    address: account.address,
+    clientName: 'MCP OAuth integration test',
+    expiresAtMs,
+    issuedAtMs,
+    origin: baseUrl,
+    resource: endpoint,
+    walletNonce,
   });
-  assert.equal(approvalResponse.status, 302, 'Owner approval should redirect to the registered callback.');
+  const walletSignature = await account.signMessage({ message: walletMessage });
+  const approvalResponse = await fetch(`${baseUrl}/oauth/authorize`, {
+    method: 'POST', headers: { origin: 'https://claude.ai', 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ request_id: requestId, wallet_address: account.address, wallet_signature: walletSignature }), redirect: 'manual',
+  });
+  assert.equal(approvalResponse.status, 302, 'Wallet approval should redirect despite a client-origin header.');
   const callback = new URL(approvalResponse.headers.get('location'));
   assert.equal(callback.origin + callback.pathname, redirectUri);
   assert.equal(callback.searchParams.get('state'), state);

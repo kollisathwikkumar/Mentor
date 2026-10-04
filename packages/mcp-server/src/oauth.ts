@@ -1,4 +1,5 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { recoverMessageAddress, type Address, type Hex } from 'viem';
 
 export const OAUTH_ISSUER = 'https://mandate-console.pages.dev';
 export const OAUTH_RESOURCE = `${OAUTH_ISSUER}/mcp`;
@@ -23,7 +24,6 @@ export interface OAuthDatabase {
 }
 
 export interface OAuthEnvironment {
-  readonly MCP_BEARER_TOKEN?: string;
   readonly MCP_ACTIVITY_DB?: OAuthDatabase;
 }
 
@@ -42,6 +42,8 @@ interface AuthorizationRow {
   readonly resource: string;
   readonly state: string | null;
   readonly expires_at_ms: number;
+  readonly wallet_nonce: string;
+  readonly principal_address: string;
 }
 
 interface TokenRow {
@@ -51,10 +53,12 @@ interface TokenRow {
   readonly resource: string;
   readonly expires_at_ms: number;
   readonly revoked_at_ms: number | null;
+  readonly principal_address: string;
 }
 
 export interface VerifiedMcpToken {
   readonly clientId: string;
+  readonly principalAddress: Address;
   readonly scopes: readonly McpScope[];
   readonly resource: string;
 }
@@ -77,12 +81,6 @@ function randomSecret(byteLength = 32): string {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
-}
-
-function safeEquals(left: string, right: string): boolean {
-  const leftBytes = Buffer.from(left, 'utf8');
-  const rightBytes = Buffer.from(right, 'utf8');
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
 function validRedirectUri(value: string): boolean {
@@ -133,10 +131,11 @@ function oauthError(error: string, status = 400, description?: string): Response
 }
 
 function html(title: string, content: string, status = 200): Response {
-  const doc = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlEscape(title)}</title><style>body{margin:0;background:#090b0a;color:#e7ebe5;font:16px system-ui,sans-serif}.wrap{max-width:560px;margin:8vh auto;padding:28px;border:1px solid #363d38;background:#111412}h1{font-size:23px}p,li{color:#b3bab4;line-height:1.55}label{display:block;margin:22px 0 8px}input{box-sizing:border-box;width:100%;padding:13px;border:1px solid #555;background:#090b0a;color:#fff}button{margin-top:16px;padding:12px 18px;border:0;background:#d4ff72;color:#10120e;font-weight:700;cursor:pointer}.muted{font-size:13px;color:#949b94}code{overflow-wrap:anywhere}</style><main class="wrap"><h1>${htmlEscape(title)}</h1>${content}</main></html>`;
+  const nonce = randomSecret(16);
+  const doc = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlEscape(title)}</title><style>body{margin:0;background:#090b0a;color:#e7ebe5;font:16px system-ui,sans-serif}.wrap{max-width:560px;margin:8vh auto;padding:28px;border:1px solid #363d38;background:#111412}h1{font-size:23px}p,li{color:#b3bab4;line-height:1.55}button{margin-top:16px;padding:12px 18px;border:0;background:#d4ff72;color:#10120e;font-weight:700;cursor:pointer}.muted{font-size:13px;color:#949b94}code{overflow-wrap:anywhere}</style><main class="wrap"><h1>${htmlEscape(title)}</h1>${content.replaceAll('__CSP_NONCE__', nonce)}</main></html>`;
   return response(doc, status, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     'X-Frame-Options': 'DENY',
   });
 }
@@ -163,7 +162,7 @@ async function formBody(request: Request): Promise<URLSearchParams | undefined> 
   return text === undefined ? undefined : new URLSearchParams(text);
 }
 
-function parseScopes(value: string | undefined, defaults: readonly OAuthScope[] = ['mandate:read', 'mandate:transfer', 'mandate:propose']): OAuthScope[] | undefined {
+function parseScopes(value: string | undefined, defaults: readonly OAuthScope[] = ['mandate:read']): OAuthScope[] | undefined {
   const scopes = value === undefined || value.trim() === '' ? [...defaults] : [...new Set(value.trim().split(/\s+/))];
   if (scopes.some((scope) => scope !== 'offline_access' && !SUPPORTED_MCP_SCOPES.includes(scope as McpScope))) return undefined;
   return scopes as OAuthScope[];
@@ -219,14 +218,49 @@ function resourceFor(url: URL): string {
   return `${issuerFor(url)}/mcp`;
 }
 
-function htmlForm(requestUrl: URL, requestId: string, clientName: string, redirectUri: string, scopes: readonly McpScope[]): string {
+export function buildWalletSignInMessage(input: {
+  readonly address: string;
+  readonly clientName: string;
+  readonly expiresAtMs: number;
+  readonly issuedAtMs: number;
+  readonly origin: string;
+  readonly resource: string;
+  readonly walletNonce: string;
+}): string {
+  const originUrl = new URL(input.origin);
+  return [
+    `${originUrl.host} wants you to sign in with your Ethereum account:`,
+    input.address,
+    '',
+    `Connect ${input.clientName} to Mandate. This signature does not create a blockchain transaction.`,
+    '',
+    `URI: ${originUrl.origin}`,
+    'Version: 1',
+    'Chain ID: 10143',
+    `Nonce: ${input.walletNonce}`,
+    `Issued At: ${new Date(input.issuedAtMs).toISOString()}`,
+    `Expiration Time: ${new Date(input.expiresAtMs).toISOString()}`,
+    'Resources:',
+    `- ${input.resource}`,
+  ].join('\n');
+}
+
+function scriptJson(value: string): string {
+  return JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e').replaceAll('&', '\\u0026');
+}
+
+function htmlForm(requestUrl: URL, requestId: string, clientName: string, redirectUri: string, scopes: readonly McpScope[], walletNonce: string, resource: string, issuedAtMs: number, expiresAtMs: number): string {
   const scopeLabels: Record<McpScope, string> = {
     'mandate:read': 'Read mandate status on Monad Testnet',
     'mandate:transfer': 'Request transfers within a mandate’s onchain limits (MCP client confirmation may be required)',
     'mandate:propose': 'Generate a review-only mandate proposal with the configured model provider',
   };
   const scopeItems = scopes.map((scope) => `<li>${htmlEscape(scopeLabels[scope])}</li>`).join('');
-  return `<p><b>${htmlEscape(clientName)}</b> is requesting access to Mandate.</p><p>Redirect after approval: <code>${htmlEscape(redirectUri)}</code></p><ul>${scopeItems}</ul><form method="post" action="${htmlEscape(`${requestUrl.origin}/oauth/authorize`)}"><input type="hidden" name="request_id" value="${htmlEscape(requestId)}"><label for="access-token">Mandate access token</label><input id="access-token" name="access_token" type="password" autocomplete="current-password" required minlength="32"><p class="muted">This token is sent only to mandate-console.pages.dev over HTTPS. It is not sent to the MCP client.</p><button type="submit">Approve client access</button></form>`;
+  const origin = htmlEscape(requestUrl.origin);
+  const escapedName = htmlEscape(clientName);
+  const signInPrefix = `${requestUrl.host} wants you to sign in with your Ethereum account:`;
+  const statement = `Connect ${clientName} to Mandate. This signature does not create a blockchain transaction.`;
+  return `<p><b>${escapedName}</b> is requesting access to Mandate for the wallet you connect.</p><p>Redirect after approval: <code>${htmlEscape(redirectUri)}</code></p><ul>${scopeItems}</ul><p class="muted">Your wallet address limits status and transfer tools to mandates owned by that wallet. Sign-in is a free message signature; it sends no transaction and does not expose your private key.</p><form id="wallet-approval" method="post" action="${origin}/oauth/authorize"><input type="hidden" name="request_id" value="${htmlEscape(requestId)}"><input type="hidden" name="wallet_nonce" value="${htmlEscape(walletNonce)}"><input type="hidden" name="issued_at_ms" value="${issuedAtMs}"><input type="hidden" name="expires_at_ms" value="${expiresAtMs}"><input type="hidden" name="wallet_address"><input type="hidden" name="wallet_signature"><button id="connect-wallet" type="button">Connect wallet and approve</button><p id="wallet-status" class="muted" role="status">Your wallet will ask you to sign a short message.</p></form><script nonce="__CSP_NONCE__">(()=>{const button=document.getElementById('connect-wallet');const status=document.getElementById('wallet-status');const form=document.getElementById('wallet-approval');button.addEventListener('click',async()=>{button.disabled=true;status.textContent='Waiting for wallet…';try{const provider=window.ethereum;if(!provider)throw new Error('No browser wallet was detected. Open this sign-in page in a browser with your wallet extension.');const accounts=await provider.request({method:'eth_requestAccounts'});const address=Array.isArray(accounts)?accounts[0]:undefined;if(typeof address!=='string'||!/^0x[0-9a-fA-F]{40}$/.test(address))throw new Error('Your wallet did not return a valid address.');const message=[${scriptJson(signInPrefix)},address,'',${scriptJson(statement)},'',${scriptJson(`URI: ${requestUrl.origin}`)},'Version: 1','Chain ID: 10143',${scriptJson(`Nonce: ${walletNonce}`)},${scriptJson(`Issued At: ${new Date(issuedAtMs).toISOString()}`)},${scriptJson(`Expiration Time: ${new Date(expiresAtMs).toISOString()}`)},'Resources:',${scriptJson(`- ${resource}`)}].join('\\n');const signature=await provider.request({method:'personal_sign',params:[message,address]});if(typeof signature!=='string'||!/^0x[0-9a-fA-F]{130}$/.test(signature))throw new Error('The wallet did not return a valid signature.');form.elements.namedItem('wallet_address').value=address;form.elements.namedItem('wallet_signature').value=signature;status.textContent='Wallet verified. Finishing connection…';form.requestSubmit();}catch(error){status.textContent=error instanceof Error?error.message:'Wallet sign-in did not complete.';button.disabled=false;}});})();</script>`;
 }
 
 export async function handleOAuthRequest(request: Request, env: OAuthEnvironment): Promise<Response> {
@@ -248,7 +282,7 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
   if (path === '/oauth/register' && request.method === 'POST') {
     const body = await jsonBody(request);
     if (!body) return oauthError('invalid_client_metadata', 400, 'A small JSON client-registration document is required.');
-    const name = typeof body.client_name === 'string' ? body.client_name.trim() : '';
+    const name = typeof body.client_name === 'string' ? body.client_name.trim().replace(/\s+/g, ' ') : '';
     const redirectUris = body.redirect_uris;
     if (name.length < 1 || name.length > 128 || !Array.isArray(redirectUris) || redirectUris.length < 1 || redirectUris.length > 10
       || !redirectUris.every((uri): uri is string => typeof uri === 'string' && uri.length <= 2048 && validRedirectUri(uri))) {
@@ -286,23 +320,28 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
       return html('Mandate sign-in could not start', '<p>The client registration or authorization request is invalid. Reconnect the client and try again.</p>', 400);
     }
     const requestId = randomSecret();
-    const expiresAt = Date.now() + AUTHORIZATION_TTL_MS;
-    const result = await database.prepare('INSERT INTO oauth_authorization_requests (request_id, client_id, redirect_uri, code_challenge, scopes_json, resource, state, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(sha256(requestId), client.clientId, redirectUri, challenge, JSON.stringify(requestedScopes), resource, state || '', expiresAt).run();
+    const issuedAt = Date.now();
+    const expiresAt = issuedAt + AUTHORIZATION_TTL_MS;
+    const walletNonce = randomSecret(16);
+    const result = await database.prepare('INSERT INTO oauth_authorization_requests (request_id, client_id, redirect_uri, code_challenge, scopes_json, resource, state, expires_at_ms, wallet_nonce) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(sha256(requestId), client.clientId, redirectUri, challenge, JSON.stringify(requestedScopes), resource, state || '', expiresAt, walletNonce).run();
     if (!result.success) return oauthError('temporarily_unavailable', 503);
-    return html('Connect to Mandate', htmlForm(url, requestId, client.clientName, redirectUri, scopes));
+    return html('Connect to Mandate', htmlForm(url, requestId, client.clientName, redirectUri, scopes, walletNonce, resource, issuedAt, expiresAt));
   }
 
   if (path === '/oauth/authorize' && request.method === 'POST') {
     const form = await formBody(request);
     const requestId = form?.get('request_id') ?? '';
-    const accessToken = form?.get('access_token') ?? '';
-    const origin = request.headers.get('Origin');
-    if (origin && origin !== url.origin) return html('Sign-in failed', '<p>Authorization form origin did not match Mandate.</p>', 403);
-    if (!form || !requestId || !accessToken || !env.MCP_BEARER_TOKEN || !safeEquals(accessToken, env.MCP_BEARER_TOKEN)) {
-      return html('Sign-in failed', '<p>That token was not accepted. Close this tab and retry from your MCP client.</p>', 401);
+    const walletAddress = form?.get('wallet_address') ?? '';
+    const walletSignature = form?.get('wallet_signature') ?? '';
+    // Some OAuth clients submit the authorization form from an embedded browser
+    // whose Origin is the client app (or is omitted). The one-time request ID,
+    // nonce-bound wallet signature, short expiry, and PKCE-bound code provide
+    // the authorization and CSRF protections without an Origin equality gate.
+    if (!form || !requestId || !/^0x[0-9a-fA-F]{40}$/.test(walletAddress) || !/^0x[0-9a-fA-F]{130}$/.test(walletSignature)) {
+      return html('Wallet sign-in did not complete', '<p>Connect your wallet and sign the short message to continue. No transaction is sent.</p>', 400);
     }
-    const row = await database.prepare('SELECT request_id AS id, client_id, redirect_uri, code_challenge, scopes_json, resource, state, expires_at_ms FROM oauth_authorization_requests WHERE request_id = ? AND expires_at_ms > ?')
+    const row = await database.prepare('SELECT request_id AS id, client_id, redirect_uri, code_challenge, scopes_json, resource, state, expires_at_ms, wallet_nonce FROM oauth_authorization_requests WHERE request_id = ? AND expires_at_ms > ?')
       .bind(sha256(requestId), Date.now()).first<AuthorizationRow>();
     if (!row || row.resource !== expectedResource) return html('Authorization request expired', '<p>Return to your MCP client and start the connection again.</p>', 400);
     const clientRow = await database.prepare('SELECT client_id, client_name, redirect_uris_json FROM oauth_clients WHERE client_id = ?').bind(row.client_id).first<ClientRow>();
@@ -310,12 +349,21 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
     if (!client || !client.redirectUris.some((registered) => redirectUriMatches(row.redirect_uri, registered))) {
       return html('Authorization request expired', '<p>The registered client is no longer valid. Reconnect the client.</p>', 400);
     }
+    const issuedAtMs = row.expires_at_ms - AUTHORIZATION_TTL_MS;
+    const expectedMessage = buildWalletSignInMessage({ address: walletAddress, clientName: client.clientName, expiresAtMs: row.expires_at_ms,
+      issuedAtMs, origin: url.origin, resource: row.resource, walletNonce: row.wallet_nonce });
+    try {
+      const signer = await recoverMessageAddress({ message: expectedMessage, signature: walletSignature as Hex });
+      if (signer.toLowerCase() !== walletAddress.toLowerCase()) return html('Wallet sign-in failed', '<p>The signature did not match the connected wallet. Return to your MCP client and try again.</p>', 401);
+    } catch {
+      return html('Wallet sign-in failed', '<p>The wallet signature could not be verified. Return to your MCP client and try again.</p>', 401);
+    }
     const code = randomSecret();
     const codeExpires = Date.now() + AUTHORIZATION_TTL_MS;
     const results = await database.batch([
       database.prepare('DELETE FROM oauth_authorization_requests WHERE request_id = ? AND expires_at_ms > ?').bind(sha256(requestId), Date.now()),
-      database.prepare('INSERT INTO oauth_authorization_codes (code_hash, client_id, redirect_uri, code_challenge, scopes_json, resource, expires_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .bind(sha256(code), row.client_id, row.redirect_uri, row.code_challenge, row.scopes_json, row.resource, codeExpires),
+      database.prepare('INSERT INTO oauth_authorization_codes (code_hash, client_id, redirect_uri, code_challenge, scopes_json, resource, expires_at_ms, principal_address) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(sha256(code), row.client_id, row.redirect_uri, row.code_challenge, row.scopes_json, row.resource, codeExpires, walletAddress.toLowerCase()),
     ]);
     if (!hasChanges(results[0]) || !results[1]?.success) return html('Authorization request expired', '<p>Return to your MCP client and start the connection again.</p>', 400);
     const destination = new URL(row.redirect_uri);
@@ -339,7 +387,7 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
       const redirectUri = form.get('redirect_uri') ?? '';
       const verifier = form.get('code_verifier') ?? '';
       if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) return oauthError('invalid_grant', 400);
-      const row = await database.prepare('SELECT code_hash, client_id, redirect_uri, code_challenge, scopes_json, resource, expires_at_ms FROM oauth_authorization_codes WHERE code_hash = ? AND expires_at_ms > ?')
+      const row = await database.prepare('SELECT code_hash, client_id, redirect_uri, code_challenge, scopes_json, resource, expires_at_ms, principal_address FROM oauth_authorization_codes WHERE code_hash = ? AND expires_at_ms > ?')
         .bind(sha256(code), now).first<AuthorizationRow>();
       if (!row || row.client_id !== clientId || !redirectUriMatches(redirectUri, row.redirect_uri) || row.resource !== expectedResource) return oauthError('invalid_grant', 400);
       if (encodeBase64Url(createHash('sha256').update(verifier, 'utf8').digest()) !== row.code_challenge) return oauthError('invalid_grant', 400);
@@ -351,17 +399,17 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
       const refreshToken = randomSecret(48);
       const results = await database.batch([
         database.prepare('DELETE FROM oauth_authorization_codes WHERE code_hash = ? AND expires_at_ms > ?').bind(sha256(code), now),
-        database.prepare("INSERT INTO oauth_tokens (token_hash, client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms) VALUES (?, ?, 'access', ?, ?, ?, NULL)")
-          .bind(sha256(accessToken), clientId, JSON.stringify(tokenScopes), expectedResource, now + ACCESS_TTL_SECONDS * 1000),
-        database.prepare("INSERT INTO oauth_tokens (token_hash, client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms) VALUES (?, ?, 'refresh', ?, ?, ?, NULL)")
-          .bind(sha256(refreshToken), clientId, JSON.stringify(tokenScopes), expectedResource, now + REFRESH_TTL_SECONDS * 1000),
+        database.prepare("INSERT INTO oauth_tokens (token_hash, client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms, principal_address) VALUES (?, ?, 'access', ?, ?, ?, NULL, ?)")
+          .bind(sha256(accessToken), clientId, JSON.stringify(tokenScopes), expectedResource, now + ACCESS_TTL_SECONDS * 1000, row.principal_address),
+        database.prepare("INSERT INTO oauth_tokens (token_hash, client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms, principal_address) VALUES (?, ?, 'refresh', ?, ?, ?, NULL, ?)")
+          .bind(sha256(refreshToken), clientId, JSON.stringify(tokenScopes), expectedResource, now + REFRESH_TTL_SECONDS * 1000, row.principal_address),
       ]);
       if (!hasChanges(results[0]) || !results[1]?.success || !results[2]?.success) return oauthError('invalid_grant', 400);
       return json({ access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, refresh_token: refreshToken, scope: responseScope });
     }
     if (grantType === 'refresh_token') {
       const refreshToken = form.get('refresh_token') ?? '';
-      const row = await database.prepare("SELECT client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms FROM oauth_tokens WHERE token_hash = ? AND token_type = 'refresh'")
+      const row = await database.prepare("SELECT client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms, principal_address FROM oauth_tokens WHERE token_hash = ? AND token_type = 'refresh'")
         .bind(sha256(refreshToken)).first<TokenRow>();
       if (!row || row.client_id !== clientId || row.revoked_at_ms !== null || row.expires_at_ms <= now || row.resource !== expectedResource) return oauthError('invalid_grant', 400);
       const oldScopes = tokenScopeString(row.scopes_json)?.split(' ');
@@ -374,10 +422,10 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
       const results = await database.batch([
         database.prepare("UPDATE oauth_tokens SET revoked_at_ms = ? WHERE token_hash = ? AND token_type = 'refresh' AND revoked_at_ms IS NULL AND expires_at_ms > ?")
           .bind(now, sha256(refreshToken), now),
-        database.prepare("INSERT INTO oauth_tokens (token_hash, client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms) VALUES (?, ?, 'access', ?, ?, ?, NULL)")
-          .bind(sha256(accessToken), clientId, JSON.stringify(scopes), expectedResource, now + ACCESS_TTL_SECONDS * 1000),
-        database.prepare("INSERT INTO oauth_tokens (token_hash, client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms) VALUES (?, ?, 'refresh', ?, ?, ?, NULL)")
-          .bind(sha256(nextRefreshToken), clientId, JSON.stringify(scopes), expectedResource, now + REFRESH_TTL_SECONDS * 1000),
+        database.prepare("INSERT INTO oauth_tokens (token_hash, client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms, principal_address) VALUES (?, ?, 'access', ?, ?, ?, NULL, ?)")
+          .bind(sha256(accessToken), clientId, JSON.stringify(scopes), expectedResource, now + ACCESS_TTL_SECONDS * 1000, row.principal_address),
+        database.prepare("INSERT INTO oauth_tokens (token_hash, client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms, principal_address) VALUES (?, ?, 'refresh', ?, ?, ?, NULL, ?)")
+          .bind(sha256(nextRefreshToken), clientId, JSON.stringify(scopes), expectedResource, now + REFRESH_TTL_SECONDS * 1000, row.principal_address),
       ]);
       if (!hasChanges(results[0]) || !results[1]?.success || !results[2]?.success) return oauthError('invalid_grant', 400);
       return json({ access_token: accessToken, token_type: 'Bearer', expires_in: ACCESS_TTL_SECONDS, refresh_token: nextRefreshToken, scope: scopes.join(' ') });
@@ -401,7 +449,7 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
 
 export async function verifyOAuthAccessToken(database: OAuthDatabase, token: string, expectedResource = OAUTH_RESOURCE): Promise<VerifiedMcpToken | undefined> {
   if (token.length < 32 || token.length > 256) return undefined;
-  const row = await database.prepare("SELECT client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms FROM oauth_tokens WHERE token_hash = ? AND token_type = 'access'")
+  const row = await database.prepare("SELECT client_id, token_type, scopes_json, resource, expires_at_ms, revoked_at_ms, principal_address FROM oauth_tokens WHERE token_hash = ? AND token_type = 'access'")
     .bind(sha256(token)).first<TokenRow>();
   if (!row || row.revoked_at_ms !== null || row.expires_at_ms <= Date.now() || row.resource !== expectedResource) return undefined;
   let parsed: unknown;
@@ -409,5 +457,6 @@ export async function verifyOAuthAccessToken(database: OAuthDatabase, token: str
   if (!Array.isArray(parsed) || !parsed.every((scope): scope is string => typeof scope === 'string')) return undefined;
   const scopes = parseScopes(parsed.join(' '), []);
   if (!scopes) return undefined;
-  return { clientId: row.client_id, scopes: scopes.filter((scope): scope is McpScope => scope !== 'offline_access'), resource: row.resource };
+  if (!/^0x[0-9a-f]{40}$/.test(row.principal_address)) return undefined;
+  return { clientId: row.client_id, principalAddress: row.principal_address as Address, scopes: scopes.filter((scope): scope is McpScope => scope !== 'offline_access'), resource: row.resource };
 }

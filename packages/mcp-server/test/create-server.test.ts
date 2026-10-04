@@ -1,7 +1,15 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
-import { createMandateMcpServer } from '../src/create-server.js';
+import { createMandateMcpServer, mandateBelongsToPrincipal } from '../src/create-server.js';
+
+describe('OAuth wallet ownership', () => {
+  it('restricts OAuth access to the connected wallet while preserving operator bearer behavior', () => {
+    expect(mandateBelongsToPrincipal('0xAa00000000000000000000000000000000000001', '0xaa00000000000000000000000000000000000001')).toBe(true);
+    expect(mandateBelongsToPrincipal('0xbb00000000000000000000000000000000000002', '0xaa00000000000000000000000000000000000001')).toBe(false);
+    expect(mandateBelongsToPrincipal('0xbb00000000000000000000000000000000000002', undefined)).toBe(true);
+  });
+});
 
 describe('MCP server provider configuration', () => {
   it('does not expose a proposal tool from leftover provider environment values', async () => {

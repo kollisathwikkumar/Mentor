@@ -12,6 +12,10 @@ const hexId = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const amount = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/);
 const availableScopes = new Set(['mandate:read', 'mandate:transfer', 'mandate:propose']);
 
+export function mandateBelongsToPrincipal(mandatePrincipal: string, principalAddress: string | undefined): boolean {
+  return principalAddress === undefined || mandatePrincipal.toLowerCase() === principalAddress.toLowerCase();
+}
+
 export function createMandateMcpServer(env: McpRuntimeEnvironment): McpServer {
   const server = new McpServer({ name: 'mandate-gateway', version: '0.2.0' });
   const grantedScopes = new Set((env.MCP_GRANTED_SCOPES ?? [...availableScopes].join(' ')).split(/\s+/).filter((scope) => availableScopes.has(scope)));
@@ -33,6 +37,9 @@ export function createMandateMcpServer(env: McpRuntimeEnvironment): McpServer {
       }, async ({ mandateId }) => {
         try {
           const status = await gateway.getStatus(mandateId);
+          if (!mandateBelongsToPrincipal(status.principal, env.MCP_PRINCIPAL_ADDRESS)) {
+            return { isError: true, content: [{ type: 'text', text: 'Mandate not found or not owned by this wallet.' }] };
+          }
           return { content: [{ type: 'text', text: JSON.stringify(status) }] };
         } catch {
           return { isError: true, content: [{ type: 'text', text: 'Mandate status lookup failed.' }] };
@@ -47,6 +54,10 @@ export function createMandateMcpServer(env: McpRuntimeEnvironment): McpServer {
         annotations: { readOnlyHint: false, destructiveHint: true },
       }, async ({ mandateId, amount: amountMon }) => {
         try {
+          const status = await gateway.getStatus(mandateId);
+          if (!mandateBelongsToPrincipal(status.principal, env.MCP_PRINCIPAL_ADDRESS)) {
+            return { isError: true, content: [{ type: 'text', text: 'Mandate not found or not owned by this wallet.' }] };
+          }
           const result = await gateway.requestTransfer({ mandateId, amount: amountMon });
           return { content: [{ type: 'text', text: JSON.stringify(result) }] };
         } catch {

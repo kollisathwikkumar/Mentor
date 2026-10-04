@@ -46,7 +46,7 @@ describe('MCP gateway', () => {
     const port = createPort();
     const gateway = new MandateGateway(port, () => 1_900_000_000);
     await expect(gateway.getStatus(snapshot.id)).resolves.toEqual({
-      mandateId: snapshot.id, active: true, expired: false, recipient: snapshot.approvedRecipient,
+      mandateId: snapshot.id, principal: snapshot.principal, active: true, expired: false, recipient: snapshot.approvedRecipient,
       perCallLimit: snapshot.perCallLimit.toString(), totalLimit: snapshot.totalLimit.toString(),
       spent: '0', remaining: snapshot.totalLimit.toString(), deposited: snapshot.deposited.toString(),
       nextNonce: '0', expiresAt: snapshot.expiresAt,

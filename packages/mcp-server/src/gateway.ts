@@ -18,6 +18,7 @@ export interface MandatePort {
 
 export interface MandateStatus {
   readonly mandateId: string;
+  readonly principal: string;
   readonly active: boolean;
   readonly expired: boolean;
   readonly recipient: string;
@@ -49,6 +50,7 @@ export class MandateGateway {
     const now = this.#now();
     return {
       mandateId: mandate.id,
+      principal: mandate.principal,
       active: mandate.active,
       expired: now >= mandate.expiresAt,
       recipient: mandate.approvedRecipient,

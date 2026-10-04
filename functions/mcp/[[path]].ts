@@ -81,15 +81,15 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
   const isStatusRequest = new URL(request.url).pathname.split('/').at(-1) === 'status';
   if (isStatusRequest) {
     if (request.method !== 'GET') return jsonError(405, 'Method not allowed.', requestOrigin);
-    const configured = Boolean(env.MCP_BEARER_TOKEN && env.MCP_BEARER_TOKEN.length >= 32);
+    const operatorConfigured = Boolean(env.MCP_BEARER_TOKEN && env.MCP_BEARER_TOKEN.length >= 32);
     if (!env.MCP_ACTIVITY_DB) {
-      return jsonResponse(200, { ready: configured, connected: false, activityTracking: false, activeWindowSeconds: 300 }, requestOrigin);
+      return jsonResponse(200, { ready: operatorConfigured, connected: false, activityTracking: false, activeWindowSeconds: 300 }, requestOrigin);
     }
     try {
       const status = await readMcpConnectionStatus(env.MCP_ACTIVITY_DB);
-      return jsonResponse(200, { ready: configured, ...status, activityTracking: true }, requestOrigin);
+      return jsonResponse(200, { ready: true, ...status, activityTracking: true }, requestOrigin);
     } catch {
-      return jsonResponse(200, { ready: configured, connected: false, activityTracking: false, activeWindowSeconds: 300 }, requestOrigin);
+      return jsonResponse(200, { ready: operatorConfigured, connected: false, activityTracking: false, activeWindowSeconds: 300 }, requestOrigin);
     }
   }
 
@@ -98,20 +98,25 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
   }
 
   const expected = env.MCP_BEARER_TOKEN;
-  if (!expected || expected.length < 32) {
+  const supplied = getBearerToken(request.headers.get('Authorization'));
+  if (!(expected && expected.length >= 32) && !env.MCP_ACTIVITY_DB) {
     return jsonError(503, 'Remote MCP authentication is not configured.', requestOrigin);
   }
-  const supplied = getBearerToken(request.headers.get('Authorization'));
-  let grantedScopes: readonly string[] = SUPPORTED_MCP_SCOPES;
-  const isMasterBearer = Boolean(supplied && matchesSecret(supplied, expected));
+  let grantedScopes: readonly string[] = [];
+  let principalAddress: string | undefined;
+  const isMasterBearer = Boolean(expected && expected.length >= 32 && supplied && matchesSecret(supplied, expected));
   if (!isMasterBearer && supplied && env.MCP_ACTIVITY_DB) {
     const resource = `${new URL(request.url).origin}/mcp`;
     const verified = await verifyOAuthAccessToken(env.MCP_ACTIVITY_DB, supplied, resource).catch(() => undefined);
-    if (verified) grantedScopes = verified.scopes;
+    if (verified) {
+      grantedScopes = verified.scopes;
+      principalAddress = verified.principalAddress;
+    }
     else return jsonError(401, 'A valid bearer token is required.', requestOrigin, request.url);
   } else if (!isMasterBearer) {
     return jsonError(401, 'A valid bearer token is required.', requestOrigin, request.url);
   }
+  if (isMasterBearer) grantedScopes = SUPPORTED_MCP_SCOPES;
 
   if (env.MCP_ACTIVITY_DB) {
     try { await recordAuthenticatedMcpRequest(env.MCP_ACTIVITY_DB); }
@@ -123,7 +128,7 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
   try {
     const runtimeEnv: Record<string, string | undefined> = {};
     for (const [key, value] of Object.entries(env)) if (typeof value === 'string') runtimeEnv[key] = value;
-    server = createMandateMcpServer({ ...runtimeEnv, MCP_GRANTED_SCOPES: grantedScopes.join(' ') });
+    server = createMandateMcpServer({ ...runtimeEnv, MCP_GRANTED_SCOPES: grantedScopes.join(' '), MCP_PRINCIPAL_ADDRESS: principalAddress });
     transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
