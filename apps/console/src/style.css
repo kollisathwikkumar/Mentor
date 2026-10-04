@@ -70,3 +70,20 @@
 .headline-line{overflow:visible}
 .headline-line>span{transform:translateY(24px);opacity:.2}
 [data-reveal].is-visible .headline-line>span{transform:translateY(0);opacity:1}
+
+/* Hero scene exits upward and clears completely before the idea section. */
+:root{--hero-progress:0}
+.experience:before{display:none}
+.landing{isolation:isolate;background:#050606}
+.landing:before{content:"";position:absolute;inset:0;z-index:-1;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:86px 86px;mask-image:linear-gradient(to bottom,black,transparent 94%);pointer-events:none}
+.ambient-scene{transform:translate3d(0,calc(var(--hero-progress)*-110vh),0);opacity:calc(1 - var(--hero-progress));transition:opacity .08s linear;will-change:transform,opacity}
+.core-object{left:50vw;top:50vh;transform:translate(-50%,-50%) rotateX(calc(-18deg + var(--pointer-y))) rotateY(calc(28deg + var(--pointer-x)*.32))}
+.story-section,.how-section{background:#050606}
+@media(max-width:760px){.core-object{top:50vh}}
+@media(prefers-reduced-motion:reduce){.ambient-scene{transform:none;opacity:0;transition:none}}
+.landing{background:transparent}
+
+:root{--pointer-rotation:0deg}
+.core-object{transform:translate(-50%,-50%) rotateX(calc(-18deg + var(--pointer-y))) rotateY(calc(28deg + var(--pointer-rotation)))}
+.core-object{animation:core-float 7s ease-in-out infinite,core-sway 7.5s ease-in-out infinite alternate}
+@keyframes core-sway{from{rotate:0 1 0 9deg}to{rotate:0 1 0 -9deg}}

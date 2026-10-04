@@ -22,6 +22,7 @@ function App(): React.JSX.Element {
       }
     }, { threshold: 0.16 });
     revealItems.forEach((item) => observer.observe(item));
+    const landing = document.querySelector<HTMLElement>('.landing');
     let frame = 0;
     const updatePointer = (event: PointerEvent): void => {
       if (event.pointerType !== 'mouse') return;
@@ -29,6 +30,7 @@ function App(): React.JSX.Element {
       const y = ((event.clientY / Math.max(1, window.innerHeight)) - 0.5) * 2;
       document.documentElement.style.setProperty('--pointer-x', `${(x * 26).toFixed(1)}px`);
       document.documentElement.style.setProperty('--pointer-y', `${(y * 18).toFixed(1)}deg`);
+      document.documentElement.style.setProperty('--pointer-rotation', `${(x * 20).toFixed(1)}deg`);
     };
     const updateScroll = (): void => {
       if (frame) return;
@@ -36,13 +38,18 @@ function App(): React.JSX.Element {
         frame = 0;
         const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
         document.documentElement.style.setProperty('--scroll-progress', String(window.scrollY / max));
+        const heroHeight = landing?.getBoundingClientRect().height ?? window.innerHeight;
+        const heroProgress = Math.min(1, Math.max(0, window.scrollY / Math.max(1, heroHeight * 0.88)));
+        document.documentElement.style.setProperty('--hero-progress', heroProgress.toFixed(4));
       });
     };
     if (!reduceMotion) {
-      window.addEventListener('scroll', updateScroll, { passive: true }); updateScroll();
+      window.addEventListener('scroll', updateScroll, { passive: true });
+      window.addEventListener('resize', updateScroll, { passive: true });
+      updateScroll();
       if (window.matchMedia('(pointer: fine)').matches) window.addEventListener('pointermove', updatePointer, { passive: true });
     }
-    return () => { observer.disconnect(); window.removeEventListener('scroll', updateScroll); window.removeEventListener('pointermove', updatePointer); if (frame) window.cancelAnimationFrame(frame); };
+    return () => { observer.disconnect(); window.removeEventListener('scroll', updateScroll); window.removeEventListener('resize', updateScroll); window.removeEventListener('pointermove', updatePointer); if (frame) window.cancelAnimationFrame(frame); };
   }, []);
   const [account, setAccount] = React.useState<Address>();
   const [records, setRecords] = React.useState<readonly RecordView[]>([]);
