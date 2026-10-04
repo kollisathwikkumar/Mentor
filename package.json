@@ -1,0 +1,37 @@
+{
+  "name": "mandate",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b packages/policy packages/intent-compiler packages/mandate-sdk packages/mcp-server packages/model-adapter apps/console",
+    "build": "npm run build --workspaces --if-present",
+    "audit:deps": "npm audit --omit=dev",
+    "audit:secrets": "node scripts/check-secrets.mjs",
+    "test:contracts": "forge test",
+    "coverage:contracts": "forge coverage",
+    "test:e2e": "npm run build --workspace @mandate/mcp-server && forge build && node scripts/test-backend-e2e.mjs",
+    "test:browser": "bash scripts/scrapling-smoke.sh"
+  },
+  "devDependencies": {
+    "@foundry-rs/anvil": "^1.7.1",
+    "@foundry-rs/forge": "^1.7.1",
+    "@vitest/coverage-v8": "^5.0.3",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@openzeppelin/contracts": "^5.4.0",
+    "viem": "^2.57.2"
+  },
+  "type": "module"
+}

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out/
+cache_forge/
+cache/
+coverage/
+.env
+.env.*
+!.env.example
+.venv-scrapling/
+__pycache__/
+.scrapling_cache/
+*.tsbuildinfo
+.DS_Store

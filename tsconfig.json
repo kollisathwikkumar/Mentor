@@ -1,0 +1,23 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/policy"
+    },
+    {
+      "path": "./packages/intent-compiler"
+    },
+    {
+      "path": "./packages/model-adapter"
+    },
+    {
+      "path": "./packages/mandate-sdk"
+    },
+    {
+      "path": "./packages/mcp-server"
+    },
+    {
+      "path": "./apps/console"
+    }
+  ]
+}
