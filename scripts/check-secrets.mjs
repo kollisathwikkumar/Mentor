@@ -7,7 +7,6 @@ const patterns = [
   /nvapi-[A-Za-z0-9_-]{20,}/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /MANDATE_AGENT_PRIVATE_KEY\s*=\s*0x[0-9a-fA-F]{64}/,
-  /NVIDIA_API_KEY[ \t]*=[ \t]*[^ \t\r\n$<][^\r\n]*/,
 ];
 const findings = [];
 

@@ -1,10 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { createViemPort } from '@mandate/sdk';
-import { IntentCompiler } from '@mandate/intent-compiler';
-import { createNvidiaAdapter } from '@mandate/model-adapter';
 import { MandateGateway } from './gateway.js';
-import { registerModelProposalTool } from './model-tool.js';
 
 export type McpRuntimeEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -13,10 +10,6 @@ const amount = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/);
 
 export function createMandateMcpServer(env: McpRuntimeEnvironment): McpServer {
   const server = new McpServer({ name: 'mandate-gateway', version: '0.2.0' });
-
-  if (env.NVIDIA_API_KEY && env.NVIDIA_MODEL) {
-    registerModelProposalTool(server, new IntentCompiler(createNvidiaAdapter(env)));
-  }
 
   const chainConfigured = ['MONAD_RPC_URL', 'MANDATE_CONTRACT_ADDRESS', 'MANDATE_AGENT_PRIVATE_KEY']
     .every((name) => env[name] !== undefined && env[name] !== '');

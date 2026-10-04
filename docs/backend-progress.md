@@ -7,7 +7,7 @@
 | Milestone | Weight | Status | Evidence |
 |---|---:|---|---|
 | Contract, policy engine, deterministic validation, and local test coverage | 25% | Complete | 15 Foundry tests; 43 TypeScript tests; local Anvil allow/deny/revoke end-to-end coverage. |
-| NVIDIA adapter, review-only proposal MCP tool, and local security checks | 20% | Complete | Live model MCP smoke test returned a schema-validated review proposal; secret scan and dependency checks passed. |
+| Provider/model proposal integration | 20% | Paused | The NVIDIA adapter, runtime configuration, and proposal tool are removed from the active code path. Reconnect after the user supplies the new provider key and endpoint/model details. |
 | Monad Testnet deployment and code verification | 20% | Complete | Chain ID 10143; contract `0x77065a818481ceebba93e79988bef9fd646f457d`; deployment block `68065182`; 5,910 bytes of bytecode. |
 | Live mandate create/fund and backend MCP status read | 15% | Complete | Mandate `0x36a730095a8f287f71184280d67d91c37cc3dd9bc4eebb3cf90908da8067dd4e`; 0.02 MON deposited; MCP returned active status and nonce 0. |
 | Live bounded transfer and live negative-path/revoke verification | 15% | Complete | MCP submitted a 0.01 MON transfer; receipt/event/balance and mandate state verified. Over-limit and revoked requests were denied; 0.01 MON remainder was withdrawn after revocation. |
@@ -24,7 +24,7 @@
 
 `npm run test:testnet-flow` passed on 2026-10-04. The runner pins chain ID 10143, the expected contract and mandate, verifies the owner/signer/recipient keys and exact initial state before sending any transaction, and refuses to repeat the non-repeatable flow after state changes.
 
-- MCP exposed `propose_mandate`, `get_mandate_status`, and `request_bounded_transfer`.
+- MCP currently exposes `get_mandate_status` and `request_bounded_transfer` when chain settings are configured; no model proposal tool is active.
 - Bounded transfer: 0.01 MON, receipt success, `TransferExecuted` event nonce 0, recipient delta adjusted for gas exactly 0.01 MON; tx `0xe880a9b30485c516279c45cb1eadc85d01bf1215aedbeedb72b7d7b4de64ae60`.
 - Over-limit request: 0.010000000000000001 MON returned `{ "status": "denied", "reason": "PER_CALL_LIMIT" }`; onchain spent/deposit/nonce unchanged.
 - Principal revocation: success; tx `0x728d4fd010176d88c27658c5a026e4670fa46c79aca1bd335ed03942fca6097d`.

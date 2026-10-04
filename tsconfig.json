@@ -5,10 +5,10 @@
       "path": "./packages/policy"
     },
     {
-      "path": "./packages/intent-compiler"
+      "path": "./packages/connectors"
     },
     {
-      "path": "./packages/model-adapter"
+      "path": "./packages/intent-compiler"
     },
     {
       "path": "./packages/mandate-sdk"

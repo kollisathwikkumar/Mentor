@@ -4,6 +4,8 @@ import { createPublicClient, createWalletClient, custom, defineChain, encodeAbiP
 import { mandateVaultAbi } from '@mandate/sdk/abi';
 import { validateAuthorizationDraft } from './authorization.js';
 import { buildMcpSetup } from './mcp-setup.js';
+import { registeredTaskCapabilities } from './capabilities.js';
+import { submitConversation, type ConversationTurn } from './conversation.js';
 import './style.css';
 interface Provider { request(args: { method: string; params?: readonly string[] }): Promise<readonly string[] | string> }
 declare global { interface Window { ethereum?: Provider; __mandateRoot?: Root } }
@@ -73,7 +75,16 @@ function App(): React.JSX.Element {
   function goBack(): void { window.location.hash = previousPage === 'home' ? '#/' : `#/${previousPage}`; }
   const [account, setAccount] = React.useState<Address>();
   const [records, setRecords] = React.useState<readonly RecordView[]>([]);
-  const [task, setTask] = React.useState(''); const [policyBuilderOpen, setPolicyBuilderOpen] = React.useState(false);
+  const [task, setTask] = React.useState('');
+  const [composerText, setComposerText] = React.useState('');
+  const [conversation, setConversation] = React.useState<readonly ConversationTurn[]>([{ id: 'welcome', role: 'assistant', content: 'Tell me what you want to get done. Include the goal, constraints, or deadline—whatever context matters.' }]);
+  const turnNumber = React.useRef(0);
+  const conversationEndRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    conversationEndRef.current?.scrollIntoView({ behavior: reduceMotion ? 'instant' : 'smooth', block: 'end' });
+  }, [conversation]);
+  const [policyBuilderOpen, setPolicyBuilderOpen] = React.useState(false);
   const [reviewOpen, setReviewOpen] = React.useState(false);
   const [agent, setAgent] = React.useState(''); const [recipient, setRecipient] = React.useState('');
   const [perCall, setPerCall] = React.useState(''); const [total, setTotal] = React.useState('');
@@ -114,12 +125,35 @@ function App(): React.JSX.Element {
     finally { setBusy(false); }
   }
   function continueToPolicy(): void {
-    if (!task.trim()) { setNotice('Describe the job your agent should handle before defining its access.'); return; }
+    if (!task.trim()) { setNotice('Describe what you want handled in the conversation first.'); return; }
     setPolicyBuilderOpen(true);
-    setNotice('Now define the exact permission this build supports. Your task note stays in this browser.');
+    setNotice('This reviews the available MON permission only. It does not run the task you described.');
+  }
+  function sendMessage(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    const result = submitConversation(conversation, composerText, `turn-${++turnNumber.current}`);
+    if (!result.ok) {
+      setNotice(result.reason === 'empty' ? 'Write a message before sending.' : 'Keep each message under 2,000 characters.');
+      return;
+    }
+    setTask(result.task);
+    setConversation(result.messages);
+    setComposerText('');
+    setPolicyBuilderOpen(false);
+    setReviewOpen(false);
+    setNotice('Local conversation draft updated. No agent or task API was called.');
+  }
+  function startNewConversation(): void {
+    setConversation([{ id: 'welcome', role: 'assistant', content: 'Tell me what you want to get done. Include the goal, constraints, or deadline—whatever context matters.' }]);
+    setComposerText('');
+    setTask('');
+    setPolicyBuilderOpen(false);
+    setReviewOpen(false);
+    setNotice('Started a new local conversation draft.');
   }
   function review(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
+    if (!task.trim()) { setNotice('Describe the task in the conversation first.'); return; }
     const validation = validateAuthorizationDraft({ task, agent, recipient, perCallMon: perCall, totalMon: total, expiresAt: expiry }, Math.floor(Date.now() / 1000));
     if (!validation.ok) { setNotice(validation.message); return; }
     setReviewOpen(true);
@@ -127,6 +161,7 @@ function App(): React.JSX.Element {
   }
   async function authorize(): Promise<void> {
     if (!account || !window.ethereum || !contractAddress) { setNotice('Connect your wallet before authorizing. No permission has been created.'); return; }
+    if (!task.trim()) { setNotice('Describe the task in the conversation first.'); setReviewOpen(false); return; }
     const validation = validateAuthorizationDraft({ task, agent, recipient, perCallMon: perCall, totalMon: total, expiresAt: expiry }, Math.floor(Date.now() / 1000));
     if (!validation.ok) { setNotice(validation.message); setReviewOpen(false); return; }
     setBusy(true);
@@ -163,13 +198,28 @@ function App(): React.JSX.Element {
       <section className="landing" aria-labelledby="landing-title"><div className="landing-overline"><span className="status-pulse"/> AUTONOMY, WITH BOUNDARIES <span className="landing-index">MONAD TESTNET · 01</span></div><div className="landing-center"><span className="landing-orbit-label label-left">POLICY / 001</span><h1 id="landing-title">mandate<span className="title-mark">.</span></h1><p>Permission for agents.<br/><span>Control that stays yours.</span></p><a className="landing-cta" href="#story">DISCOVER THE PROTOCOL <span>↓</span></a><span className="landing-orbit-label label-right">EST. FOR THE OPEN ECONOMY</span></div><div className="landing-foot"><span>PROGRAMMABLE ACCESS ON MONAD</span><a href="#story">SCROLL TO EXPLORE <span>↓</span></a><span>01 — 03</span></div></section>
       <section className="story-section" id="story" aria-labelledby="story-title"><div className="section-meta" data-reveal><span>01 / THE IDEA</span><span>SMALL RULES. REAL AGENCY.</span></div><div className="story-copy" data-reveal><p className="eyebrow">A NEW KIND OF DELEGATION</p><h2 id="story-title"><span className="headline-line"><span>Let your agents</span></span><span className="headline-line"><span>move with purpose.</span></span><span className="headline-line"><span className="muted-line">Not unlimited power.</span></span></h2><p className="story-description">Mandate turns a task into a clear, bounded permission. Set who can act, where value can go, how much can move, and when authority ends — then register that rule on Monad.</p><a className="text-link" href="#how">SEE HOW IT WORKS <span>↓</span></a></div><div className="story-graphic" aria-hidden="true" data-reveal><div className="graphic-ring ring-a"/><div className="graphic-ring ring-b"/><div className="graphic-core"><span>M</span></div><div className="graphic-node node-a">01<br/><b>INTENT</b></div><div className="graphic-node node-b">02<br/><b>BOUNDARY</b></div><div className="graphic-node node-c">03<br/><b>CONTROL</b></div><span className="graphic-caption">A POLICY, MADE LEGIBLE</span></div><div className="story-bottom"><span>THE AGENT ACTS INSIDE THE RULE.</span><span>YOU KEEP THE KEY.</span></div></section>
       <section className="how-section" id="how" aria-labelledby="how-title"><div className="section-meta" data-reveal><span>02 / HOW IT WORKS</span><span>DEFINE → AUTHORIZE → MANAGE</span></div><div className="how-heading" data-reveal><p className="eyebrow">THE MECHANISM</p><h2 id="how-title"><span className="headline-line"><span>A simple boundary</span></span><span className="headline-line"><span>for complex work.</span></span></h2><p>One fixed-recipient native MON policy, with onchain limits and an expiry you choose.</p></div><div className="steps-line" aria-label="Three steps"><article className="step-card" data-reveal><span className="step-number">01</span><div className="step-glyph glyph-task">↗</div><h3>Describe the job</h3><p>Start with what you want your agent to handle. Your task note stays in this browser.</p><span className="step-foot">INTENT, IN YOUR WORDS</span></article><article className="step-card" data-reveal><span className="step-number">02</span><div className="step-glyph glyph-rule">⌁</div><h3>Set the boundary</h3><p>Choose the signer, a single destination, per-action and total MON limits, and an expiry.</p><span className="step-foot">NARROW BY DESIGN</span></article><article className="step-card" data-reveal><span className="step-number">03</span><div className="step-glyph glyph-key">◇</div><h3>Authorize onchain</h3><p>Review the rule, then approve its registration with your wallet. This step does not make a payment.</p><span className="step-foot">YOU STAY IN CONTROL</span></article></div><div className="how-note" data-reveal><span>TESTNET CAPABILITY</span><p>Mandate currently registers fixed-recipient MON access policies. Escrow funding is separate. MCP setup lives on its own page; this workspace only manages onchain permissions.</p></div><a className="workspace-link" href="#/workspace">OPEN THE MANDATE WORKSPACE <span>↘</span></a></section>
-      <div className="shell"><aside className="rail"><div className="brand">M<span>.</span></div><small>WORKSPACE</small><div className="nav-active">▦ &nbsp; Agent access</div><div className="nav-muted">⌁ &nbsp; Activity</div><div className="rail-foot">POLICY NETWORK<br/><b>MONAD TESTNET</b></div></aside><main className="workspace">
-    <header><span>Workspace <i>/</i> Agent access</span><div><button className="header-route-action" type="button" onClick={goBack}>← Back</button><a className="header-route-action" href="#/">Home</a><a className="header-link" href="#/space">Space overview</a><span className="network"><i/>Monad Testnet</span><button className="wallet" onClick={() => void connect()}>{account ? account.slice(0, 6) + '…' + account.slice(-4) : 'Connect wallet'}</button></div></header>
-    <section className="hero"><div><p className="kicker">AGENT AUTHORIZATION <span>01 / 03</span></p><h1>Delegate the work.<br/><em>Keep control of access.</em></h1><p className="lede">Start with the outcome you want. Then define the narrow permission an agent may use. Wallet approval registers that permission—it does not make a payment.</p></div><div className="stamp"><span>POLICY NETWORK</span><b>MONAD</b><small>TESTNET · 10143</small></div></section>
-    <div className="notice" role="status"><i/>{notice}<button onClick={() => void refresh()} disabled={busy}>Refresh ↗</button></div>
-    <section className="task-panel"><div className="task-heading"><div><p className="kicker">START WITH THE JOB</p><h2>What should your agent handle?</h2><p>Describe the result in your own words. The task note stays in this browser; it is not stored onchain.</p></div><div className="flow-steps"><span className="step-current">01 <b>Describe</b></span><span>02 <b>Set access</b></span><span>03 <b>Authorize</b></span></div></div>
-      <label className="task-label" htmlFor="task-description">Delegated task</label><textarea id="task-description" aria-label="Delegated task" value={task} onChange={(event) => setTask(event.target.value)} placeholder="For example: Let the invoice agent pay the approved supplier, within the agreed limit, before the due date." maxLength={2000}/>
-      <div className="task-actions"><span>Task context is separate from the onchain permission.</span><button className="primary" type="button" onClick={continueToPolicy}>Define agent access <b>→</b></button></div>
+      <div className="shell"><aside className="rail"><div className="brand">M<span>.</span></div><small>WORKSPACE</small><div className="nav-active">▦ &nbsp; Agent access</div><div className="rail-foot">POLICY NETWORK<br/><b>MONAD TESTNET</b></div></aside><main className="workspace">
+    <header><span>Workspace <i>/</i> Agent access</span><div><button className="header-route-action" type="button" onClick={goBack}>← Back</button><a className="header-route-action" href="#/">Home</a><span className="network"><i/>Monad Testnet</span></div></header>
+    <section className="hero"><div><p className="kicker">MANDATE WORKSPACE · MONAD TESTNET</p><h1>What would you like<br/><em>your agent to handle?</em></h1><p className="lede">Describe the work in your own words. Mandate will keep the conversation open and show exactly which permissions this build can enforce.</p></div><div className="stamp"><span>POLICY NETWORK</span><b>MONAD</b><small>TESTNET · 10143</small></div></section>
+    <div className="notice" role="status"><i/>{notice}</div>
+    <section className="task-panel conversation-panel" aria-labelledby="conversation-title">
+      <div className="conversation-heading">
+        <div className="conversation-agent"><span className="conversation-mark">M<span>·</span></span><div><p className="kicker">CONVERSATION</p><h2 id="conversation-title">New conversation</h2></div></div>
+        <div className="conversation-heading-actions"><span className="conversation-mode"><i/> LOCAL DRAFT</span><button className="conversation-reset" type="button" onClick={startNewConversation}>New chat <b>＋</b></button></div>
+      </div>
+      <div className="conversation-thread" role="log" aria-live="polite" aria-relevant="additions text">
+        {conversation.map((message) => <article className={`conversation-message ${message.role}`} key={message.id}>
+          {message.role === 'assistant' && <span className="message-avatar" aria-hidden="true">M<span>·</span></span>}
+          <div className="message-body"><small>{message.role === 'assistant' ? 'MANDATE' : 'YOU'}</small><p>{message.content}</p></div>
+        </article>)}
+        <div ref={conversationEndRef} aria-hidden="true"/>
+      </div>
+      <form className="conversation-composer" onSubmit={sendMessage}>
+        <label className="sr-only" htmlFor="conversation-input">Describe what you want the agent to handle</label>
+        <textarea id="conversation-input" value={composerText} onChange={(event) => setComposerText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Tell Mandate what you want the agent to take care of…" maxLength={2_000} rows={3}/>
+        <div className="composer-footer"><span>↵ Send · ⇧↵ New line <i/> {composerText.length}/2,000</span><button className="composer-send" type="submit" disabled={!composerText.trim()}>Send <b>↑</b></button></div>
+      </form>
+      <div className="conversation-boundary"><span className="boundary-icon">⌁</span><div><small>AVAILABLE ENFORCEMENT</small><b>{registeredTaskCapabilities[0]?.label ?? 'No registered action'}</b><p>Only this MON transfer policy is enforced onchain. The conversation does not call an agent, and other task types are not executed.</p></div><button type="button" className="boundary-action" onClick={continueToPolicy} disabled={!task.trim()}>Review access <b>↗</b></button></div>
     </section>
     {policyBuilderOpen ? <>
       <div className="section-title"><div><p className="kicker">STEP 02 · DEFINE THE BOUNDARY</p><h2>Choose what this agent may do</h2></div><small>ACCESS POLICY · NOT A PAYMENT</small></div>
@@ -180,11 +230,11 @@ function App(): React.JSX.Element {
         <label>Permission expires <span>Local timezone</span><input type="datetime-local" value={expiry} onChange={(event) => setExpiry(event.target.value)} required/></label><div className="policy-note">This stage creates an access rule only. It cannot send value to the recipient; funding and agent execution are separate actions.</div><button className="primary" disabled={busy}>Review access policy <b>→</b></button>
       </form><div className="side"><article className="proof"><div><span className="check">✓</span><small>HOW ACCESS WORKS</small></div><h3>Permission before execution.</h3><p>A wallet registers the rule onchain. Connect your local agent from the dedicated MCP page; this contract currently enforces fixed-recipient MON transfers.</p><ul><li>01 <b>Fixed destination</b></li><li>02 <b>Hard limits</b></li><li>03 <b>Revoke access</b></li></ul></article>
         <details className="funding-details"><summary>Optional · prepare funds for a MON permission</summary><p>Funding is a separate wallet action. Deposited MON stays in escrow until a later authorized agent action or withdrawal after revocation.</p><form className="panel" onSubmit={(event) => void fund(event)}><label>Permission ID<input value={id} onChange={(event) => setId(event.target.value)} placeholder="Created after authorization" required autoComplete="off"/></label><label>Escrow amount <span>MON</span><input value={deposit} onChange={(event) => setDeposit(event.target.value)} inputMode="decimal" placeholder="e.g. 0.02" required/></label><button className="secondary" disabled={busy}>Add escrow funds <b>↗</b></button></form></details></div></div>
-    </> : <section className="policy-empty"><div className="empty-number">02</div><div><p className="kicker">NEXT · ACCESS DESIGN</p><h2>Define the permission only after the job is clear.</h2><p>The current testnet capability is a fixed-recipient MON payment. Signing an access rule does not trigger that action.</p></div></section>}
+    </> : null}
     <section className="records"><div className="section-title"><div><p className="kicker">LIVE ACCESS STATE</p><h2>Agent permissions <sup>{records.length.toString().padStart(2, '0')}</sup></h2></div><button className="refresh" onClick={() => void refresh()} disabled={busy}>↻ &nbsp; Refresh records</button></div>
       {records.length === 0 ? <div className="empty"><div className="monogram">M</div><div><b>No agent permissions for this wallet</b><p>Approved access will appear here after you authorize it.</p></div><small>CHAIN VERIFIED · 10143</small></div> : records.map((item) => <article className="record" key={item.id}><div><small>ACCESS ID</small><code>{item.id.slice(0, 10)}…{item.id.slice(-8)}</code></div><div><small>FIXED DESTINATION</small><code>{item.recipient.slice(0, 6)}…{item.recipient.slice(-4)}</code></div><div><small>USED / TOTAL AUTHORITY</small><b>{formatEther(item.spent)} <i>/ {formatEther(item.total)} MON</i></b></div><div><small>ESCROW AVAILABLE</small><b>{formatEther(item.deposited)} MON</b></div><div><i className={item.active ? 'active-dot' : 'off-dot'}/>{item.active ? 'Active' : 'Revoked'}</div>{item.active && <button className="revoke" onClick={() => void revoke(item.id)} disabled={busy}>Revoke access</button>}</article>)}
     </section><footer><span>MANDATE · AGENT ACCESS CONTROL</span><span>POLICY IS ENFORCED ON MONAD TESTNET <i>●</i></span></footer>
-    {reviewOpen && <div className="modal-backdrop"><section className="review-sheet" role="dialog" aria-modal="true" aria-labelledby="review-title"><p className="kicker">STEP 03 · HUMAN REVIEW</p><h2 id="review-title">Review agent access</h2><p className="review-intro">Confirm the outcome and exact boundaries before your wallet registers this permission.</p><dl className="review-grid"><div><dt>Task</dt><dd>{task}</dd></div><div><dt>Allowed capability</dt><dd>Pay native MON to one fixed destination</dd></div><div><dt>Agent signer</dt><dd>{agent}</dd></div><div><dt>Fixed destination</dt><dd>{recipient}</dd></div><div><dt>Per-action maximum</dt><dd>{perCall} MON</dd></div><div><dt>Total authority</dt><dd>{total} MON</dd></div><div><dt>Expires</dt><dd>{new Date(expiry).toLocaleString()}</dd></div></dl><div className="review-note"><b>No payment happens here.</b> Wallet confirmation records this access policy on Monad. Escrow funding and any later agent action are separate.</div><div className="review-actions"><button className="secondary" type="button" onClick={() => setReviewOpen(false)}>Edit policy</button>{!account && <button className="secondary" type="button" onClick={() => void connect()}>Connect wallet</button>}<button className="primary" type="button" onClick={() => void authorize()} disabled={!account || busy}>{busy ? 'Waiting for wallet…' : 'Authorize agent access'} <b>↗</b></button></div></section></div>}
+    {reviewOpen && <div className="modal-backdrop"><section className="review-sheet" role="dialog" aria-modal="true" aria-labelledby="review-title"><p className="kicker">STEP 03 · HUMAN REVIEW</p><h2 id="review-title">Review agent access</h2><p className="review-intro">Review the independent onchain permission. This does not execute the task from your conversation.</p><dl className="review-grid"><div><dt>Task</dt><dd>{task}</dd></div><div><dt>Available permission</dt><dd>{registeredTaskCapabilities[0]?.label ?? 'No registered action'} · not connected to this task execution</dd></div><div><dt>Agent signer</dt><dd>{agent}</dd></div><div><dt>Fixed destination</dt><dd>{recipient}</dd></div><div><dt>Per-action maximum</dt><dd>{perCall} MON</dd></div><div><dt>Total authority</dt><dd>{total} MON</dd></div><div><dt>Expires</dt><dd>{new Date(expiry).toLocaleString()}</dd></div></dl><div className="review-note"><b>No payment happens here.</b> Wallet confirmation records this access policy on Monad. Escrow funding and any later agent action are separate.</div><div className="review-actions"><button className="secondary" type="button" onClick={() => setReviewOpen(false)}>Edit policy</button>{!account && <button className="secondary" type="button" onClick={() => void connect()}>Connect wallet</button>}<button className="primary" type="button" onClick={() => void authorize()} disabled={!account || busy}>{busy ? 'Waiting for wallet…' : 'Authorize agent access'} <b>↗</b></button></div></section></div>}
   </main></div>
     <section className="standalone-page mcp-page" aria-labelledby="connections-title">
       <div className="page-breadcrumb"><div className="breadcrumb-labels"><a href="#/space">SPACE</a><span>/</span><span>MCP CONNECTION</span></div><div className="page-route-actions"><button type="button" onClick={goBack}>← Back</button><a href="#/">Home</a></div></div>
@@ -200,7 +250,7 @@ function App(): React.JSX.Element {
         {!mcpSetup && <p className="mcp-validation">Enter a valid HTTPS endpoint without embedded credentials to generate the Codex command.</p>}
         <p className="mcp-token-note">Set your token in Codex’s launch environment—not here. This page never receives it.</p>
       </div>
-      <details className="mcp-tools-details"><summary>What can Codex do with these tools?</summary><div className="mcp-tools-list"><p><code>get_mandate_status</code><span>Read a mandate’s current onchain limits and state.</span></p><p><code>propose_mandate</code><span>Draft a policy when server-side model credentials are configured.</span></p><p><code>request_bounded_transfer</code><span>Request a transfer within an active mandate, subject to client approval.</span></p></div><small>Tools appear only when their server-side chain or model settings are configured.</small></details>
+      <details className="mcp-tools-details"><summary>What can Codex do with these tools?</summary><div className="mcp-tools-list"><p><code>get_mandate_status</code><span>Read a mandate’s current onchain limits and state.</span></p><p><code>request_bounded_transfer</code><span>Request a transfer within an active mandate, subject to client approval.</span></p></div><small>These chain tools appear only when server-side chain settings are configured. Conversation prompts are not sent to an AI provider or executed.</small></details>
     </section>
     <section className="standalone-page space-page" aria-labelledby="space-title"><div className="page-breadcrumb"><div className="breadcrumb-labels"><span>MANDATE</span><span>/</span><span>SPACE</span></div><div className="page-route-actions"><button type="button" onClick={goBack}>← Back</button><a href="#/">Home</a></div></div><div className="space-hero"><div><p className="kicker">YOUR CONTROL PLANE · MONAD TESTNET</p><h1 id="space-title">One space.<br/><em>Clear boundaries.</em></h1><p>Keep agent access, connection setup, and live permission state close at hand.</p></div><div className="space-orbit" aria-hidden="true"><div className="space-orbit-ring ring-one"/><div className="space-orbit-ring ring-two"/><div className="space-orbit-core">M</div><span>POLICY SPACE · 01</span></div></div><div className="space-stats"><article><span>ACTIVE PERMISSIONS</span><b>{records.filter((item) => item.active).length.toString().padStart(2, '0')}</b><small>READ FROM YOUR CONNECTED WALLET</small></article><article><span>WALLET</span><b>{account ? `${account.slice(0, 6)}…${account.slice(-4)}` : 'NOT CONNECTED'}</b><small>{account ? 'CONNECTED TO MONAD TESTNET' : 'CONNECT TO LOAD ONCHAIN STATE'}</small></article><article><span>AGENT SETUP</span><b>REMOTE MCP</b><small>CODEX SETUP GUIDE AVAILABLE</small></article></div><div className="space-grid"><section className="space-panel"><div className="section-title"><div><p className="kicker">YOUR WORKFLOW</p><h2>Start with the right boundary.</h2></div></div><a className="space-action" href="#/workspace"><span className="space-step">01</span><span><b>Manage permissions</b><small>Create, review, fund, or revoke onchain access.</small></span><i>↗</i></a><a className="space-action" href="#/connections"><span className="space-step">02</span><span><b>Connect an agent</b><small>Connect Codex to the hosted remote MCP service.</small></span><i>↗</i></a></section><section className="space-panel recent-panel"><div className="section-title"><div><p className="kicker">ONCHAIN SNAPSHOT</p><h2>Recent permissions</h2></div><button type="button" className="refresh" onClick={() => void refresh()} disabled={busy}>↻ Refresh</button></div>{records.length === 0 ? <div className="space-empty"><span>—</span><div><b>No permissions loaded</b><p>Connect a wallet, then refresh to read its Monad Testnet records.</p></div></div> : records.slice(0, 4).map((item) => <div className="space-record" key={item.id}><span className={item.active ? 'active-dot' : 'off-dot'}/><code>{item.id.slice(0, 10)}…{item.id.slice(-8)}</code><span>{item.active ? 'ACTIVE' : 'REVOKED'}</span><b>{formatEther(item.total - item.spent)} MON left</b></div>)}</section></div><div className="space-footer"><span>PRIVATE BY DEFAULT · LOCAL AGENT SETUP · ONCHAIN POLICY STATE</span><a href="#/">BACK TO MANDATE <span>↑</span></a></div></section></main></div>;
 }

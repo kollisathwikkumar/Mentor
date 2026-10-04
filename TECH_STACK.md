@@ -2,7 +2,7 @@
 
 **Decision goal:** choose components because they match Mandate's trust boundaries, the hosted-inference choice and cost controls, the hackathon's working-product requirements, and the actual development machine—not because a tool is fashionable.  
 **Current machine checked:** Apple Silicon M2, 16 GB RAM; Node `v26.7.0` and npm `11.19.0` are installed; Foundry (`forge`) is not installed.  
-**Implementation status (2026-10-04):** The first local vertical slice now uses this stack: Solidity/Foundry, TypeScript/npm workspaces, viem/Zod, MCP stdio, a provider-neutral compiler with NVIDIA NIM adapter, and React/Vite. Monad Testnet deployment and live model calls remain unconfigured.
+**Implementation status (2026-10-04):** The local vertical slice uses Solidity/Foundry, TypeScript/npm workspaces, viem/Zod, MCP stdio/Streamable HTTP, and React/Vite. Model-provider configuration and inference are paused; no API key is required or used by the current runtime.
 
 ## Recommendation in one line
 
@@ -32,7 +32,7 @@ Mandate's unique technical risk is not rendering pages or running an LLM. It is 
 | Tests | Foundry unit/fuzz/invariant; Vitest for TS; Anvil end-to-end; Playwright for UI smoke checks | Separates contract invariants, policy/MCP behavior, and the integrated workflow. All core tests run locally without model/API/network access. | Add a deployed Testnet smoke suite as a separately triggered release check. |
 | CI and delivery | GitHub Actions, public repo, standard hosted runners | Required hackathon evidence includes public source and build-window commits; the free resources plan uses public-repo CI and avoids paid runners. | Keep deploy jobs manual; do not expose private deployment keys to pull-request workflows. |
 
-Official references: [Monad Testnet docs](https://docs.monad.xyz/developer-essentials/testnet), [Foundry Book](https://getfoundry.sh/), [OpenZeppelin cryptography](https://docs.openzeppelin.com/contracts/5.x/api/utils/cryptography), [MCP TypeScript SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/), [Next.js static export docs](https://nextjs.org/docs/pages/guides/static-exports) (evaluated, but not selected), [Node release schedule](https://github.com/nodejs/Release/blob/main/README.md), [NVIDIA NIM API](https://docs.api.nvidia.com/nim/reference/llm-apis), [OpenAI API pricing](https://developers.openai.com/api/docs/pricing).
+Official references: [Monad Testnet docs](https://docs.monad.xyz/developer-essentials/testnet), [Foundry Book](https://getfoundry.sh/), [OpenZeppelin cryptography](https://docs.openzeppelin.com/contracts/5.x/api/utils/cryptography), [MCP TypeScript SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/), [Next.js static export docs](https://nextjs.org/docs/pages/guides/static-exports) (evaluated, but not selected), [Node release schedule](https://github.com/nodejs/Release/blob/main/README.md).
 
 ## Why not just use the names in the resource list?
 
@@ -87,7 +87,6 @@ mandate/
 │   ├── intent-compiler/     # Candidate extraction, ambiguity detection, preview data; no authority
 │   ├── mandate-client/      # viem contract client, typed-data, event decoder
 │   ├── mcp-server/          # Node-only stdio handlers + isolated agent signer
-│   └── model-adapter/       # Provider-neutral hosted API adapter; no signer/policy authority
 ├── contracts/               # Foundry + Solidity + OpenZeppelin
 ├── scripts/                 # local, Anvil, Testnet deploy and demo fixtures
 ├── docs/                    # threat model, API, architecture, integration guide

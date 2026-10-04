@@ -10,7 +10,7 @@ const baseUrl = 'http://127.0.0.1:8788';
 const endpoint = `${baseUrl}/mcp`;
 const devVarsPath = new URL('../.dev.vars', import.meta.url);
 const mandateId = '0x36a730095a8f287f71184280d67d91c37cc3dd9bc4eebb3cf90908da8067dd4e';
-const required = ['MONAD_RPC_URL', 'MONAD_CHAIN_ID', 'MANDATE_CONTRACT_ADDRESS', 'MANDATE_AGENT_PRIVATE_KEY', 'NVIDIA_API_KEY', 'NVIDIA_MODEL'];
+const required = ['MONAD_RPC_URL', 'MONAD_CHAIN_ID', 'MANDATE_CONTRACT_ADDRESS', 'MANDATE_AGENT_PRIVATE_KEY'];
 
 for (const key of required) assert.ok(process.env[key], `Missing required local variable: ${key}`);
 let existed = true;
@@ -18,7 +18,7 @@ try { await readFile(devVarsPath); } catch { existed = false; }
 assert.equal(existed, false, 'Refusing to overwrite existing .dev.vars. Move it aside and rerun the local integration test.');
 
 const bearer = randomBytes(32).toString('hex');
-const envKeys = [...required, 'NVIDIA_API_ENDPOINT', 'NVIDIA_REASONING_EFFORT'];
+const envKeys = required;
 const vars = [`MCP_BEARER_TOKEN=${bearer}`, 'MCP_ALLOWED_ORIGINS=http://127.0.0.1:8788', ...envKeys.map((key) => `${key}=${process.env[key]}`)].join('\n') + '\n';
 const handle = await open(devVarsPath, 'wx', 0o600);
 await handle.writeFile(vars, 'utf8');
@@ -60,25 +60,7 @@ try {
   await client.connect(transport);
   const toolList = await client.listTools();
   const toolNames = toolList.tools.map((tool) => tool.name).sort();
-  assert.deepEqual(toolNames, ['get_mandate_status', 'propose_mandate', 'request_bounded_transfer']);
-
-  const proposal = await client.callTool({ name: 'propose_mandate', arguments: { task: 'Create a review-only native MON permission for signer 0x1111111111111111111111111111111111111111 and recipient 0x2222222222222222222222222222222222222222. Maximum per transfer 0.25 MON, total maximum 1 MON, expiry 2030-01-01 00:00 UTC.' } });
-  assert.equal(proposal.isError, undefined, 'Model outage should be represented as a safe clarification tool result, not an MCP protocol failure.');
-  const proposalText = proposal.content.find((item) => item.type === 'text')?.text;
-  assert.ok(proposalText, 'Model proposal tool must return JSON text.');
-  const proposalResult = JSON.parse(proposalText);
-  let inferenceResult = 'PASS: NVIDIA proposal validated as review-only.';
-  if (proposalResult.status === 'ready_for_user_review') {
-    assert.equal(proposalResult.preview.action, 'native_transfer');
-    assert.equal(proposalResult.preview.perCallLimitWei, '250000000000000000');
-    assert.equal(proposalResult.preview.totalLimitWei, '1000000000000000000');
-    assert.equal(Object.hasOwn(proposalResult, 'transactionHash'), false, 'Proposal must not submit a chain transaction.');
-  } else {
-    assert.equal(proposalResult.status, 'needs_clarification');
-    assert.deepEqual(proposalResult.missingFields, ['model_response'], 'Provider failures must not produce an unsafe proposal.');
-    assert.match(proposalResult.question, /^The model provider (?:is unavailable \(HTTP \d{3}\)|request timed out|connection failed)\./);
-    inferenceResult = `DEGRADED: MCP safely reported "${proposalResult.question}".`;
-  }
+  assert.deepEqual(toolNames, ['get_mandate_status', 'request_bounded_transfer']);
 
   const status = await client.callTool({ name: 'get_mandate_status', arguments: { mandateId } });
   assert.equal(status.isError, undefined);
@@ -95,7 +77,7 @@ try {
   const denial = JSON.parse(denialText);
   assert.deepEqual(denial, { status: 'denied', reason: 'MANDATE_INACTIVE' }, 'Revoked authority must deny transfer without sending a transaction.');
 
-  console.log(`PASS: local Pages Function started; auth/CORS gates passed; authenticated Streamable HTTP initialized; all three tools listed; ${inferenceResult} live Monad status read; revoked mandate transfer denied without transaction.`);
+  console.log('PASS: local Pages Function started; auth/CORS gates passed; authenticated Streamable HTTP initialized; only chain status/transfer tools listed; live Monad status read; revoked mandate transfer denied without transaction.');
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`FAIL: ${message}`);

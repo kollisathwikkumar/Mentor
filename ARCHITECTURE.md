@@ -11,7 +11,7 @@
 
 ## Implementation status — 2026-10-04
 
-Implemented packages follow this design: `contracts/MandateVault.sol`, `packages/policy`, `packages/intent-compiler`, `packages/model-adapter`, `packages/mandate-sdk`, `packages/mcp-server`, and `apps/console`. Evidence includes deterministic TypeScript tests, Foundry invariants, local Anvil + MCP stdio end-to-end checks, live NVIDIA MCP proposal, and Monad Testnet transfer/deny/revoke/withdraw receipts. Browser-wallet acceptance remains a separate operational gate.
+Implemented packages follow this design: `contracts/MandateVault.sol`, `packages/policy`, `packages/intent-compiler`, `packages/mandate-sdk`, `packages/mcp-server`, and `apps/console`. Evidence includes deterministic TypeScript tests, Foundry invariants, local Anvil + MCP stdio end-to-end checks, and Monad Testnet transfer/deny/revoke/withdraw receipts. Model inference is currently disconnected from the runtime and browser-wallet acceptance remains a separate operational gate.
 
 ## 1. Executive architecture decision
 
@@ -363,7 +363,7 @@ The local vertical slice is implemented, but release completion requires all of 
 
 - **ERC-8004:** identity adapter after core signer binding works; never a replacement for the contract's authorization checks.
 - **Passkey/P256:** later signer option; EOA/EIP-712 is the smallest testable first path. Monad Track 04 calls out native P256 support, so revisit if the basic vertical slice is complete early.
-- **Model API provider:** select after verifying structured tool-call support, billing, limits, privacy/retention, and regional access. Keep a provider adapter boundary; NVIDIA NIM Developer Program currently documents free prototyping endpoints, while production use requires NVIDIA AI Enterprise licensing. A deterministic harness remains the no-billing test path, not a fallback reasoning model.
+- **Model API provider:** not configured in the current runtime. Re-enable inference only after confirming provider endpoint, model ID, authentication/request schema, billing limits, privacy/retention, and regional access. Keep all credentials server-side; deterministic tests remain provider-independent.
 - **General tools/offchain APIs:** later, with a credential-owning gateway and a separate threat model per connector.
 - **Onchain denial events:** not in MVP. Reverted calls have no persistent logs; local denial logs remain local. Do not add a public event method that falsely suggests an arbitrary self-reported denial proves the blocked side effect.
 - **Hosted deployment/indexing:** defer. Use local MCP stdio, public Monad Testnet RPC, and direct event reads for the hackathon proof.
@@ -379,3 +379,26 @@ The local vertical slice is implemented, but release completion requires all of 
 - [`README.md`](README.md) — project and submission overview.
 - [`FREE_RESOURCES.md`](FREE_RESOURCES.md) — infrastructure resources and API cost boundaries.
 - [`TECH_STACK.md`](TECH_STACK.md) — workstation-specific stack rationale, trade-offs, pinning, and upgrade triggers.
+
+## Generic capability authorization foundation (2026-10)
+
+The four fixed workspace task categories have been removed. The workspace now accepts a general task brief and presents an action selector backed by the currently registered UI capability catalog. That catalog currently contains only `monad.native-transfer`; it is not a claim that other tasks can be executed.
+
+`packages/connectors` introduces the typed backend foundation:
+
+- versioned connector/action manifest descriptors, strict Zod input parsing, duplicate-registration rejection, and an allowlist registry;
+- a generic mandate/grant model with exact policy-hash approval, principal and expiry checks, explicit resource/argument constraints, per-grant call limits, and a gateway that reserves idempotency before dispatch;
+- an adapter port whose execution errors become `unknown` outcomes, preventing blind retries;
+- a versioned, owner-scoped task-state transition reducer with explicit legal edges and event IDs.
+
+### Runtime boundary / not yet production-connected
+
+The repository has a Cloudflare Pages MCP Function but no checked-in Wrangler/Pages bindings config, D1 database binding, Durable Object binding/migration, task API route, validated per-user identity provider, or production policy-store adapter. Accordingly, the new `PolicyStore` is an interface; the test-only store is not persistence. The task reducer is pure and does not persist events or stream them to the workspace. The UI catalog is presently a single in-code entry rather than an API response. The current authenticated MCP route still uses one shared bearer token and the existing MON MCP request path still uses `MandateGateway`/`MandateVault`; the generic gateway does not yet mediate that action. These boundaries must be resolved before treating the generic task flow as deployable or multi-tenant.
+
+Do not register an offchain connector until it has a backend-held credential adapter, enforceable typed scopes, durable atomic reservation/idempotency, and connector-specific outcome/reconciliation tests. Monad continues to enforce only its existing fixed-recipient native-MON transfer semantics; a policy hash or generic manifest does not extend onchain enforcement.
+
+### Next implementation gate
+
+Before adding D1/SQLite Durable Object/Workflow bindings, establish the Pages/Worker compatibility date and local `wrangler pages dev` harness, then add and run migrations against local D1 and test concurrent reservations against a real Durable Object runtime. Configure a validated user identity/JWT audience-and-scope adapter before replacing the shared MCP bearer as the multi-user principal. Only then expose create/propose/clarify/approve/action/status/event-stream routes; approval and revocation remain human/API operations, never model-callable tools.
+
+Cloudflare design references: [storage selection](https://developers.cloudflare.com/workers/platform/storage-options/), [SQLite Durable Object storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), [D1 database API](https://developers.cloudflare.com/d1/worker-api/d1-database/), and [Workflows guide](https://developers.cloudflare.com/workflows/get-started/guide/).
