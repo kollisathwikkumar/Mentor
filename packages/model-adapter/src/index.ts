@@ -15,6 +15,16 @@ export interface ModelAdapterConfig {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+async function fetchWithTimeout(fetcher: FetchLike, endpoint: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetcher(endpoint, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class NvidiaModelAdapter {
   readonly #config: ModelAdapterConfig;
   readonly #fetch: FetchLike;
@@ -41,7 +51,7 @@ export class NvidiaModelAdapter {
     if (prompt.trim().length === 0 || prompt.length > 12_000) {
       throw new RangeError('Prompt must contain 1 to 12000 characters');
     }
-    const response = await this.#fetch(this.#config.endpoint, {
+    const init: RequestInit = {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.#config.apiKey}`,
@@ -55,9 +65,22 @@ export class NvidiaModelAdapter {
         reasoning_effort: this.#config.reasoningEffort ?? 'none',
         stream: false,
       }),
-      signal: AbortSignal.timeout(this.#config.timeoutMs),
-    });
-    if (!response.ok) throw new Error(`Model provider returned HTTP ${response.status}`);
+    };
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(this.#fetch, this.#config.endpoint, init, this.#config.timeoutMs);
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      response = await fetchWithTimeout(this.#fetch, this.#config.endpoint, init, this.#config.timeoutMs);
+    }
+    if ([429, 500, 502, 503, 504].includes(response.status)) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      response = await fetchWithTimeout(this.#fetch, this.#config.endpoint, init, this.#config.timeoutMs);
+    }
+    if (!response.ok) {
+      console.error(`NVIDIA model provider returned HTTP ${response.status}`);
+      throw new Error(`Model provider returned HTTP ${response.status}`);
+    }
     let body: unknown;
     try {
       body = await response.json();
@@ -73,7 +96,7 @@ export class NvidiaModelAdapter {
   }
 }
 
-export function createNvidiaAdapter(env: NodeJS.ProcessEnv, fetcher: FetchLike = fetch): NvidiaModelAdapter {
+export function createNvidiaAdapter(env: Readonly<Record<string, string | undefined>>, fetcher: FetchLike = fetch): NvidiaModelAdapter {
   const apiKey = env.NVIDIA_API_KEY;
   const model = env.NVIDIA_MODEL;
   if (apiKey === undefined || model === undefined) {

@@ -40,6 +40,10 @@ it('requests clarification on empty prompts and provider failures', async () => 
   const compiler = new IntentCompiler({ complete: async () => { throw new Error('offline'); } });
   await expect(compiler.propose('')).resolves.toMatchObject({ status: 'needs_clarification', missingFields: ['task'] });
   await expect(compiler.propose('valid task')).resolves.toMatchObject({ status: 'needs_clarification', missingFields: ['model_response'] });
+  await expect(new IntentCompiler({ complete: async () => { throw new Error('Model provider returned HTTP 503'); } }).propose('valid task'))
+    .resolves.toMatchObject({ status: 'needs_clarification', missingFields: ['model_response'], question: 'The model provider is unavailable (HTTP 503). Retry later or enter policy fields directly.' });
+  await expect(new IntentCompiler({ complete: async () => { throw new TypeError('fetch failed'); } }).propose('valid task'))
+    .resolves.toMatchObject({ status: 'needs_clarification', question: 'The model provider connection failed. Retry later or enter policy fields directly.' });
 });
 
 it('rejects invalid amount precision and unknown timezones', async () => {

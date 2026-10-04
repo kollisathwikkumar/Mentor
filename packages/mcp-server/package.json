@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "./dist/main.js",
+  "types": "./dist/main.d.ts",
+  "exports": {
+    "./server": {
+      "types": "./dist/create-server.d.ts",
+      "import": "./dist/create-server.js"
+    }
+  },
   "scripts": {
     "build": "tsc -b",
     "start": "node --env-file=../../.env.local dist/main.js",

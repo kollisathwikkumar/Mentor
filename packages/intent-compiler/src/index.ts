@@ -51,7 +51,17 @@ export class IntentCompiler {
     ].join('\n');
     let response: string;
     try { response = await this.#model.complete(instructions); }
-    catch { return this.#clarify(['model_response'], 'The model proposal could not be retrieved. Retry or enter policy fields directly.'); }
+    catch (error) {
+      const httpStatus = error instanceof Error ? /^Model provider returned HTTP (\d{3})$/.exec(error.message)?.[1] : undefined;
+      const question = httpStatus !== undefined
+        ? `The model provider is unavailable (HTTP ${httpStatus}). Retry later or enter policy fields directly.`
+        : error instanceof Error && error.name === 'TimeoutError'
+          ? 'The model provider request timed out. Retry later or enter policy fields directly.'
+          : error instanceof TypeError
+            ? 'The model provider connection failed. Retry later or enter policy fields directly.'
+            : 'The model proposal could not be retrieved. Retry or enter policy fields directly.';
+      return this.#clarify(['model_response'], question);
+    }
 
     let parsedJson: unknown;
     try { parsedJson = JSON.parse(response); }

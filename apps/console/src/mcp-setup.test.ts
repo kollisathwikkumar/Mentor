@@ -1,47 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { buildMcpSetup, type McpClient } from './mcp-setup.js';
+import { buildMcpSetup } from './mcp-setup.js';
 
 describe('buildMcpSetup', () => {
-  it('creates a Codex local stdio registration command with the selected repository path', () => {
-    const setup = buildMcpSetup('codex', '/Users/example/METROPOLIS');
-    expect(setup.config).toContain('codex mcp add mandate -- npm');
-    expect(setup.config).toContain("'/Users/example/METROPOLIS'");
-    expect(setup.config).toContain('@mandate/mcp-server');
-  });
-
-  it('creates a Cursor JSON configuration without embedding secrets', () => {
-    const setup = buildMcpSetup('cursor', '/Users/example/METROPOLIS');
-    const parsed: { mcpServers: Record<string, { command: string; args: string[] }> } = JSON.parse(setup.config);
-    const mandate = parsed.mcpServers.mandate;
-    expect(mandate).toBeDefined();
-    if (!mandate) throw new Error('Generated configuration is missing the Mandate server.');
-    expect(mandate.command).toBe('npm');
-    expect(mandate.args).toContain('/Users/example/METROPOLIS');
+  it('creates a Codex Streamable HTTP registration without embedding bearer credentials', () => {
+    const setup = buildMcpSetup('https://mandate-console.pages.dev/mcp');
+    expect(setup.config).toBe("codex mcp add mandate-cloud --url 'https://mandate-console.pages.dev/mcp' --bearer-token-env-var MANDATE_MCP_TOKEN");
     expect(setup.config).not.toContain('PRIVATE_KEY');
     expect(setup.config).not.toContain('API_KEY');
+    expect(setup.config).not.toContain('token-value');
+    expect(setup.verify).toContain('codex mcp list');
   });
 
-  it('creates a Claude Code CLI command with safely quoted paths', () => {
-    const setup = buildMcpSetup('claude-code', "/Users/example/METRO POLIS");
-    expect(setup.config).toContain("'/Users/example/METRO POLIS'");
-    expect(setup.config).toContain('claude mcp add');
-    const quoted = buildMcpSetup('codex', "/Users/example/O'Connor/METROPOLIS");
-    expect(quoted.config).toContain("O'\\''Connor/METROPOLIS");
+  it('quotes shell metacharacters in otherwise valid URLs', () => {
+    const setup = buildMcpSetup("https://example.com/a'b");
+    expect(setup.config).toContain("'https://example.com/a'\\''b'");
   });
 
-  it('rejects relative, empty, or newline-containing paths', () => {
-    const badPaths = ['', 'METROPOLIS', '/tmp/project\n--danger'];
-    for (const path of badPaths) {
-      expect(() => buildMcpSetup('codex', path)).toThrow('Enter an absolute project folder path.');
-    }
-  });
-
-  it('provides client-specific verification steps', () => {
-    const clients: readonly McpClient[] = ['codex', 'cursor', 'claude-code'];
-    for (const client of clients) {
-      const setup = buildMcpSetup(client, '/Users/example/METROPOLIS');
-      expect(setup.verify.length).toBeGreaterThan(0);
-      expect(setup.location.length).toBeGreaterThan(0);
+  it('rejects non-HTTPS, credential-bearing, and query-string endpoints', () => {
+    const invalidEndpoints = [
+      'http://localhost:8788/mcp',
+      'https://user:secret@example.com/mcp',
+      'https://example.com/mcp?token=secret',
+      'not a URL',
+    ];
+    for (const endpoint of invalidEndpoints) {
+      expect(() => buildMcpSetup(endpoint)).toThrow();
     }
   });
 });

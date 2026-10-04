@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { NvidiaModelAdapter, type ModelAdapterConfig } from '../src/index.js';
 
 const config: ModelAdapterConfig = {
@@ -25,8 +25,48 @@ describe('NVIDIA model adapter', () => {
   });
 
   it('fails closed on a non-success response without exposing provider body', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const adapter = new NvidiaModelAdapter(config, async () => new Response('secret response text', { status: 401 }));
     await expect(adapter.complete('hello')).rejects.toThrow('Model provider returned HTTP 401');
+    expect(log).toHaveBeenCalledWith('NVIDIA model provider returned HTTP 401');
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('secret response text'));
+    log.mockRestore();
+  });
+
+  it('retries one transient provider capacity response and returns the second result', async () => {
+    let calls = 0;
+    const adapter = new NvidiaModelAdapter(config, async () => {
+      calls += 1;
+      if (calls === 1) return new Response('provider capacity detail', { status: 503 });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'recovered' } }] }), { status: 200 });
+    });
+    await expect(adapter.complete('hello')).resolves.toBe('recovered');
+    expect(calls).toBe(2);
+  });
+
+  it('retries one transient transport error with a fresh abort signal', async () => {
+    let calls = 0;
+    const signals: AbortSignal[] = [];
+    const adapter = new NvidiaModelAdapter(config, async (_input, init) => {
+      calls += 1;
+      if (init?.signal instanceof AbortSignal) signals.push(init.signal);
+      if (calls === 1) throw new TypeError('temporary fetch failure');
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'recovered' } }] }), { status: 200 });
+    });
+    await expect(adapter.complete('hello')).resolves.toBe('recovered');
+    expect(calls).toBe(2);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).not.toBe(signals[1]);
+  });
+
+  it('retries transient failures only once and keeps provider errors sanitized', async () => {
+    let calls = 0;
+    const adapter = new NvidiaModelAdapter(config, async () => {
+      calls += 1;
+      return new Response('provider private payload', { status: 503 });
+    });
+    await expect(adapter.complete('hello')).rejects.toThrow('Model provider returned HTTP 503');
+    expect(calls).toBe(2);
   });
 
   it('rejects malformed provider content', async () => {
