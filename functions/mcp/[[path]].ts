@@ -1,11 +1,13 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { createMandateMcpServer } from '@mandate/mcp-server/server';
+import { SUPPORTED_MCP_SCOPES, verifyOAuthAccessToken, type OAuthDatabase } from '@mandate/mcp-server/oauth';
 import { readMcpConnectionStatus, recordAuthenticatedMcpRequest, type McpActivityDatabase } from '@mandate/mcp-server/connection-status';
 
 interface RemoteMcpEnvironment {
   readonly MCP_BEARER_TOKEN?: string;
   readonly MCP_ALLOWED_ORIGINS?: string;
-  readonly MCP_ACTIVITY_DB?: McpActivityDatabase;
+  readonly GEMINI_API_KEY?: string;
+  readonly MCP_ACTIVITY_DB?: OAuthDatabase & McpActivityDatabase;
 }
 
 interface PagesRequestContext {
@@ -47,9 +49,9 @@ function withHeaders(response: Response, requestOrigin: string | null): Response
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function jsonError(status: number, message: string, requestOrigin: string | null): Response {
+function jsonError(status: number, message: string, requestOrigin: string | null, serviceUrl?: string): Response {
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8' });
-  if (status === 401) headers.set('WWW-Authenticate', 'Bearer realm="Mandate MCP"');
+  if (status === 401) headers.set('WWW-Authenticate', `Bearer resource_metadata="${new URL('/.well-known/oauth-protected-resource/mcp', serviceUrl ?? defaultAllowedOrigin).toString()}"`);
   return withHeaders(new Response(JSON.stringify({ error: message }), { status, headers }), requestOrigin);
 }
 
@@ -79,11 +81,15 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
   const isStatusRequest = new URL(request.url).pathname.split('/').at(-1) === 'status';
   if (isStatusRequest) {
     if (request.method !== 'GET') return jsonError(405, 'Method not allowed.', requestOrigin);
-    if (!env.MCP_ACTIVITY_DB) return jsonError(503, 'MCP connection status is not configured.', requestOrigin);
+    const configured = Boolean(env.MCP_BEARER_TOKEN && env.MCP_BEARER_TOKEN.length >= 32);
+    if (!env.MCP_ACTIVITY_DB) {
+      return jsonResponse(200, { ready: configured, connected: false, activityTracking: false, activeWindowSeconds: 300 }, requestOrigin);
+    }
     try {
-      return jsonResponse(200, await readMcpConnectionStatus(env.MCP_ACTIVITY_DB), requestOrigin);
+      const status = await readMcpConnectionStatus(env.MCP_ACTIVITY_DB);
+      return jsonResponse(200, { ready: configured, ...status, activityTracking: true }, requestOrigin);
     } catch {
-      return jsonError(503, 'MCP connection status is unavailable.', requestOrigin);
+      return jsonResponse(200, { ready: configured, connected: false, activityTracking: false, activeWindowSeconds: 300 }, requestOrigin);
     }
   }
 
@@ -96,21 +102,28 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
     return jsonError(503, 'Remote MCP authentication is not configured.', requestOrigin);
   }
   const supplied = getBearerToken(request.headers.get('Authorization'));
-  if (!supplied || !matchesSecret(supplied, expected)) {
-    return jsonError(401, 'A valid bearer token is required.', requestOrigin);
+  let grantedScopes: readonly string[] = SUPPORTED_MCP_SCOPES;
+  const isMasterBearer = Boolean(supplied && matchesSecret(supplied, expected));
+  if (!isMasterBearer && supplied && env.MCP_ACTIVITY_DB) {
+    const resource = `${new URL(request.url).origin}/mcp`;
+    const verified = await verifyOAuthAccessToken(env.MCP_ACTIVITY_DB, supplied, resource).catch(() => undefined);
+    if (verified) grantedScopes = verified.scopes;
+    else return jsonError(401, 'A valid bearer token is required.', requestOrigin, request.url);
+  } else if (!isMasterBearer) {
+    return jsonError(401, 'A valid bearer token is required.', requestOrigin, request.url);
   }
 
-  if (!env.MCP_ACTIVITY_DB) return jsonError(503, 'MCP connection status is not configured.', requestOrigin);
-  try {
-    await recordAuthenticatedMcpRequest(env.MCP_ACTIVITY_DB);
-  } catch {
-    return jsonError(503, 'MCP request was not accepted because activity could not be recorded.', requestOrigin);
+  if (env.MCP_ACTIVITY_DB) {
+    try { await recordAuthenticatedMcpRequest(env.MCP_ACTIVITY_DB); }
+    catch { /* Activity telemetry must not take down the MCP service. */ }
   }
 
   let server: ReturnType<typeof createMandateMcpServer> | undefined;
   let transport: WebStandardStreamableHTTPServerTransport | undefined;
   try {
-    server = createMandateMcpServer(env);
+    const runtimeEnv: Record<string, string | undefined> = {};
+    for (const [key, value] of Object.entries(env)) if (typeof value === 'string') runtimeEnv[key] = value;
+    server = createMandateMcpServer({ ...runtimeEnv, MCP_GRANTED_SCOPES: grantedScopes.join(' ') });
     transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

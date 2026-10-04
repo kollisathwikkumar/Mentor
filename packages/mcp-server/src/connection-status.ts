@@ -2,6 +2,7 @@ export const MCP_CONNECTION_WINDOW_MS = 5 * 60 * 1000;
 
 interface D1Result {
   readonly success: boolean;
+  readonly meta?: { readonly changes?: number };
 }
 
 interface D1Statement {

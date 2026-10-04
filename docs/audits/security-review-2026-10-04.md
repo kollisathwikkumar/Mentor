@@ -37,3 +37,24 @@ No Critical or High issue was identified in the reviewed local path. The local A
 - `npm run test:testnet-flow` → pass; live MCP transfer of 0.01 MON, gas-adjusted recipient balance and contract event verified; above-cap request denied with `PER_CALL_LIMIT`; principal revocation succeeded; post-revocation request denied with `MANDATE_INACTIVE`; remaining 0.01 MON withdrawal verified; final status inactive, spent 0.01, deposited 0, nonce 1.
 - `npm run test:contracts` → pass, 15 Foundry tests.
 - `npm run test:e2e` → pass, local MCP process + Anvil end-to-end allow/over-limit/revoke path.
+
+## Hosted MCP OAuth and connectivity review — 2026-10-05
+
+**Security-sensitive:** Yes. **Reviewed:** Pages MCP auth, OAuth endpoints/token storage, D1 migration, server scope gates, and console MCP setup. This is an engineering review, not an external penetration test or identity-provider certification.
+
+| OWASP category | Result | Evidence / residual |
+|---|---|---|
+| A01 Broken access control | Pass with residual | MCP requires master bearer or verified OAuth access token; OAuth scopes gate registered tools; code/token resources, client id, redirect URI, expiry, PKCE, and revocation are checked. Owner bootstrap is shared-service, not per-user/tenant isolation. |
+| A02 Cryptographic failures | Pass | 32-byte random client/code/access secrets; token and authorization-request values are SHA-256 hashed at rest; PKCE S256; constant-time master-token comparison; HTTPS deployment. |
+| A03 Injection | Pass | Parameterized D1 statements; fixed route paths; bounded JSON/form bodies; OAuth HTML interpolations are escaped; redirect targets must be registered HTTPS URIs or loopback HTTP. |
+| A04 Insecure design | Pass with residual | OAuth authorization code + PKCE, state return, resource/audience binding, one-time codes, short access-token TTL, and refresh rotation/replay rejection. Dynamic client registration is public and has no application-level rate limiter; configure Cloudflare rate limiting before wider use. |
+| A05 Security misconfiguration | Pass after deploy verification | Exact-origin allowlist, no-store auth responses, CSP on approval page, OAuth discovery, token secret server-side, D1 migration applied remotely. Cloudflare production env values were not exposed in review. |
+| A06 Vulnerable components | Pass | `npm audit --omit=dev` → 0 vulnerabilities. |
+| A07 Identification/authentication | Pass with residual | Direct bearer requires 32+ chars; OAuth tokens are independently validated, expire, refresh-rotate, and revoke. OAuth's owner login asks for the shared service token, so it is one-operator bootstrap rather than user identity. |
+| A08 Software/data integrity | Pass | Scope values are validated against a fixed allowlist; OAuth code tied to registered redirect + PKCE; MCP server tools are built from verified scopes. |
+| A09 Logging/monitoring | Pass with limitation | Activity is only an aggregate timestamp/count; prompts and tokens are not stored. Failed auth/client registration abuse is not retained as an audit trail. |
+| A10 SSRF | Pass | No arbitrary server-side fetch target comes from MCP/OAuth requests; redirects only return to validated registered targets. |
+
+**Validation:** `npm test` passed 87 tests; `npm run typecheck` passed; `npm run build --workspace @mandate/console` passed; `npm run audit:secrets` passed; `npm audit --omit=dev` reported 0 vulnerabilities; `npm run test:remote-mcp:local` passed actual Pages Functions + local D1 with bearer auth, OAuth DCR, PKCE exchange, read-only scoped tool list, refresh rotation, replay rejection, status, and existing no-transaction chain denial checks. Remote D1 migration `0002_mcp_oauth.sql` applied successfully. Hosted end-to-end verification remains the release/deploy gate.
+
+**Review status:** PASS WITH TRACKED MVP LIMITATIONS (single-operator shared-token bootstrap; rate limiting for public DCR; vendor UI acceptance per plan/client; third-party audit before production-value use).

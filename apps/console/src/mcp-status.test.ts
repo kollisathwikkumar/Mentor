@@ -16,7 +16,7 @@ describe('MCP status client', () => {
   });
 
   it('fetches an uncached status and returns the server-observed state', async () => {
-    const response = { connected: true, activeWindowSeconds: 300 };
+    const response = { ready: true, connected: true, activityTracking: true, activeWindowSeconds: 300 };
     const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     await expect(fetchMcpConnectionStatus('https://example.test/mcp', fetcher)).resolves.toEqual(response);
     expect(fetcher).toHaveBeenCalledWith('https://example.test/mcp/status', { headers: { Accept: 'application/json' }, cache: 'no-store' });
@@ -29,9 +29,9 @@ describe('MCP status client', () => {
     await expect(fetchMcpConnectionStatus('https://example.test/mcp', malformed)).rejects.toThrow('invalid');
     const nullBody = vi.fn<typeof fetch>(async () => new Response('null', { status: 200 }));
     await expect(fetchMcpConnectionStatus('https://example.test/mcp', nullBody)).rejects.toThrow('invalid');
-    const missingWindow = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ connected: false }), { status: 200 }));
+    const missingWindow = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ready: true, connected: false, activityTracking: false }), { status: 200 }));
     await expect(fetchMcpConnectionStatus('https://example.test/mcp', missingWindow)).rejects.toThrow('invalid');
-    const invalidWindow = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ connected: false, activeWindowSeconds: 0 }), { status: 200 }));
+    const invalidWindow = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ready: true, connected: false, activityTracking: false, activeWindowSeconds: 0 }), { status: 200 }));
     await expect(fetchMcpConnectionStatus('https://example.test/mcp', invalidWindow)).rejects.toThrow('invalid');
   });
 });

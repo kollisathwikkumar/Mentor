@@ -1,5 +1,7 @@
 export interface McpConnectionStatus {
+  readonly ready: boolean;
   readonly connected: boolean;
+  readonly activityTracking: boolean;
   readonly activeWindowSeconds: number;
 }
 
@@ -21,7 +23,9 @@ export function buildMcpStatusUrl(endpoint: string): string {
 function isConnectionStatus(value: unknown): value is McpConnectionStatus {
   if (typeof value !== 'object' || value === null) return false;
   const record = value as Record<string, unknown>;
-  return typeof record.connected === 'boolean'
+  return typeof record.ready === 'boolean'
+    && typeof record.connected === 'boolean'
+    && typeof record.activityTracking === 'boolean'
     && Number.isSafeInteger(record.activeWindowSeconds) && (record.activeWindowSeconds as number) > 0;
 }
 
@@ -30,5 +34,6 @@ export async function fetchMcpConnectionStatus(endpoint: string, fetcher: typeof
   if (!response.ok) throw new Error(`MCP status check failed (${response.status}).`);
   const body: unknown = await response.json();
   if (!isConnectionStatus(body)) throw new Error('The MCP status response is invalid.');
+  if (!body.ready) throw new Error('The hosted MCP service is not configured yet.');
   return body;
 }

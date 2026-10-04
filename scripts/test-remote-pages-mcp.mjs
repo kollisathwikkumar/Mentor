@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmod, mkdtemp, open, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -62,10 +62,53 @@ try {
 
   const unauthenticated = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(unauthenticated.status, 401, 'Unauthenticated MCP request must be rejected.');
+  assert.match(unauthenticated.headers.get('www-authenticate') ?? '', /oauth-protected-resource/);
   const badOrigin = await fetch(endpoint, { method: 'POST', headers: { origin: 'https://attacker.invalid' }, body: '{}' });
   assert.equal(badOrigin.status, 403, 'Unapproved browser origin must be rejected.');
   const preflight = await fetch(endpoint, { method: 'OPTIONS', headers: { origin: 'http://127.0.0.1:8788', 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type' } });
   assert.equal(preflight.status, 204, 'Allowed-origin CORS preflight must pass.');
+
+  const statusResponse = await fetch(`${endpoint}/status`);
+  assert.equal(statusResponse.status, 200);
+  assert.deepEqual(await statusResponse.json(), { ready: true, connected: false, activityTracking: true, activeWindowSeconds: 300 });
+
+  const redirectUri = 'http://127.0.0.1/callback';
+  const registrationResponse = await fetch(`${baseUrl}/oauth/register`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ client_name: 'MCP OAuth integration test', redirect_uris: [redirectUri] }),
+  });
+  assert.equal(registrationResponse.status, 201);
+  const registration = await registrationResponse.json();
+  const verifier = randomBytes(32).toString('base64url');
+  const challenge = createHash('sha256').update(verifier).digest('base64url');
+  const state = randomBytes(16).toString('hex');
+  const authorizeUrl = new URL(`${baseUrl}/oauth/authorize`);
+  authorizeUrl.search = new URLSearchParams({
+    response_type: 'code', client_id: registration.client_id, redirect_uri: redirectUri,
+    code_challenge: challenge, code_challenge_method: 'S256', scope: 'mandate:read offline_access', state,
+    resource: endpoint,
+  }).toString();
+  const authorizeResponse = await fetch(authorizeUrl);
+  assert.equal(authorizeResponse.status, 200);
+  const authorizeHtml = await authorizeResponse.text();
+  const requestId = authorizeHtml.match(/name="request_id" value="([A-Za-z0-9_-]+)"/)?.[1];
+  assert.ok(requestId, 'OAuth authorize page should issue a short-lived request identifier.');
+  const approvalResponse = await fetch(`${baseUrl}/oauth/authorize`, {
+    method: 'POST', headers: { origin: baseUrl, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ request_id: requestId, access_token: bearer }), redirect: 'manual',
+  });
+  assert.equal(approvalResponse.status, 302, 'Owner approval should redirect to the registered callback.');
+  const callback = new URL(approvalResponse.headers.get('location'));
+  assert.equal(callback.origin + callback.pathname, redirectUri);
+  assert.equal(callback.searchParams.get('state'), state);
+  const tokenResponse = await fetch(`${baseUrl}/oauth/token`, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'authorization_code', client_id: registration.client_id,
+      redirect_uri: redirectUri, code: callback.searchParams.get('code'), code_verifier: verifier, resource: endpoint }),
+  });
+  assert.equal(tokenResponse.status, 200, 'PKCE authorization code should exchange for tokens.');
+  const oauthTokens = await tokenResponse.json();
+  assert.equal(oauthTokens.scope, 'mandate:read offline_access');
 
   const client = new Client({ name: 'mandate-remote-mcp-local-check', version: '1.0.0' });
   clients.add(client);
@@ -109,7 +152,25 @@ try {
   const denial = JSON.parse(denialText);
   assert.deepEqual(denial, { status: 'denied', reason: 'MANDATE_INACTIVE' }, 'Revoked authority must deny transfer without sending a transaction.');
 
-  console.log(`PASS: local Pages Function started; auth/CORS gates passed; authenticated Streamable HTTP initialized; review-only model + chain tools listed; ${modelResult} live Monad status read; revoked mandate transfer denied without transaction.`);
+  const oauthClient = new Client({ name: 'mandate-oauth-scope-check', version: '1.0.0' });
+  clients.add(oauthClient);
+  await oauthClient.connect(new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers: { authorization: `Bearer ${oauthTokens.access_token}` } } }));
+  const oauthToolNames = (await oauthClient.listTools()).tools.map((tool) => tool.name).sort();
+  assert.deepEqual(oauthToolNames, ['get_mandate_status'], 'OAuth scopes must expose only the granted read-only tool.');
+  const refreshed = await fetch(`${baseUrl}/oauth/token`, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', client_id: registration.client_id, refresh_token: oauthTokens.refresh_token, resource: endpoint }),
+  });
+  assert.equal(refreshed.status, 200, 'Refresh token rotation should succeed.');
+  const rotatedTokens = await refreshed.json();
+  assert.equal(rotatedTokens.scope, 'mandate:read offline_access');
+  const replay = await fetch(`${baseUrl}/oauth/token`, {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', client_id: registration.client_id, refresh_token: oauthTokens.refresh_token, resource: endpoint }),
+  });
+  assert.equal(replay.status, 400, 'A rotated refresh token cannot be replayed.');
+
+  console.log(`PASS: local Pages Function started; auth/CORS/status passed; bearer Streamable HTTP initialized; OAuth PKCE, scoped tools, refresh rotation and replay rejection passed; review-only model + chain tools listed; ${modelResult} live Monad status read; revoked mandate transfer denied without transaction.`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   const safeProviderDiagnostics = logs.split('\n').filter((line) => line.includes('Gemini model transport failed') || line.includes('Gemini model provider returned HTTP'));

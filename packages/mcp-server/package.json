@@ -13,6 +13,10 @@
     "./connection-status": {
       "types": "./dist/connection-status.d.ts",
       "import": "./dist/connection-status.js"
+    },
+    "./oauth": {
+      "types": "./dist/oauth.d.ts",
+      "import": "./dist/oauth.js"
     }
   },
   "scripts": {

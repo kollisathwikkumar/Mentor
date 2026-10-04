@@ -3,7 +3,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createPublicClient, createWalletClient, custom, defineChain, encodeAbiParameters, formatEther, http, isAddress, keccak256, parseEther, stringToHex, type Address, type Hex } from 'viem';
 import { mandateVaultAbi } from '@mandate/sdk/abi';
 import { validateAuthorizationDraft } from './authorization.js';
-import { buildMcpSetup } from './mcp-setup.js';
 import { fetchMcpConnectionStatus, type McpConnectionStatus } from './mcp-status.js';
 import { registeredTaskCapabilities } from './capabilities.js';
 import { submitConversation, type ConversationTurn } from './conversation.js';
@@ -92,14 +91,10 @@ function App(): React.JSX.Element {
   const [expiry, setExpiry] = React.useState(''); const [id, setId] = React.useState(''); const [deposit, setDeposit] = React.useState('');
   const [notice, setNotice] = React.useState('Connect your wallet to read and manage onchain mandates.');
   const [busy, setBusy] = React.useState(false);
-  const [mcpEndpoint, setMcpEndpoint] = React.useState(import.meta.env.VITE_MANDATE_MCP_URL ?? 'https://mandate-console.pages.dev/mcp');
-  const [setupCopied, setSetupCopied] = React.useState(false);
+  const mcpEndpoint = import.meta.env.VITE_MANDATE_MCP_URL ?? 'https://mandate-console.pages.dev/mcp';
   const [mcpStatus, setMcpStatus] = React.useState<McpConnectionStatus>();
   const [mcpStatusBusy, setMcpStatusBusy] = React.useState(false);
-  const mcpSetup = React.useMemo(() => {
-    try { return buildMcpSetup(mcpEndpoint); }
-    catch { return undefined; }
-  }, [mcpEndpoint]);
+  const [mcpCopied, setMcpCopied] = React.useState(false);
   async function connect(): Promise<void> {
     if (!window.ethereum) { setNotice('No EIP-1193 browser wallet detected.'); return; }
     try {
@@ -133,8 +128,8 @@ function App(): React.JSX.Element {
       const status = await fetchMcpConnectionStatus(mcpEndpoint);
       setMcpStatus(status);
       setNotice(status.connected
-        ? 'An authenticated MCP client request was seen within the last five minutes.'
-        : 'The MCP endpoint is reachable, but no authenticated client request was seen within the last five minutes.');
+        ? 'Mandate is online and has seen authenticated MCP traffic recently.'
+        : 'Mandate is online. Connect an MCP client to record a handshake.');
     } catch (error) {
       setMcpStatus(undefined);
       setNotice(error instanceof Error ? error.message : 'MCP status check failed.');
@@ -257,23 +252,19 @@ function App(): React.JSX.Element {
     <section className="standalone-page mcp-page" aria-labelledby="connections-title">
       <div className="page-breadcrumb"><div className="breadcrumb-labels"><a href="#/space">SPACE</a><span>/</span><span>MCP CONNECTION</span></div><div className="page-route-actions"><button type="button" onClick={goBack}>← Back</button><a href="#/">Home</a></div></div>
       <div className="standalone-heading mcp-hero">
-        <div><p className="kicker">REMOTE MCP · STREAMABLE HTTP</p><h1 id="connections-title">Connect an MCP<br/><em>compatible client.</em></h1><p>Use any MCP client that supports remote Streamable HTTP and bearer authentication. Client setup differs by app; ChatGPT web currently requires OAuth, which this shared-token endpoint does not provide.</p></div>
-        <div className="mcp-hero-orbit" aria-hidden="true"><div className="mcp-orbit-ring ring-one"/><div className="mcp-orbit-ring ring-two"/><div className="mcp-orbit-core">M</div><span>STREAMABLE HTTP · HTTPS</span></div>
+        <div><p className="kicker">REMOTE MCP · STREAMABLE HTTP</p><h1 id="connections-title">Connect your<br/><em>AI client.</em></h1><p>Use one hosted MCP URL with any client that supports remote Streamable HTTP. OAuth is available for clients that support it; other clients can use a bearer token.</p></div>
       </div>
       <div className="connections mcp-setup-card" id="connections">
-        <div className="connection-steps mcp-steps" aria-label="Three steps to connect"><article><b>01</b><div><strong>Set a client secret</strong><p>Configure <code>MANDATE_MCP_TOKEN</code> in the environment used by your MCP client.</p></div></article><i/><article><b>02</b><div><strong>Register the endpoint</strong><p>Use your client’s remote Streamable HTTP connection settings and bearer header.</p></div></article><i/><article><b>03</b><div><strong>Verify a handshake</strong><p>Send an authenticated initialize request, then check the latest connection below.</p></div></article></div>
-        <div className="mcp-endpoint-row"><label>HOSTED MCP ENDPOINT<input value={mcpEndpoint} onChange={(event) => { setMcpEndpoint(event.target.value); setSetupCopied(false); setMcpStatus(undefined); }} spellCheck={false} autoComplete="url" aria-label="HTTPS URL of the remote Mandate MCP service"/></label><span className="mcp-transport">REMOTE · HTTPS</span></div>
-        <div className="mcp-status-row"><div className="mcp-status-copy" aria-live="polite"><span className={mcpStatus ? (mcpStatus.connected ? 'mcp-status-dot is-connected' : 'mcp-status-dot') : 'mcp-status-dot is-unknown'}/><div><strong>{mcpStatus ? (mcpStatus.connected ? 'RECENT AUTHENTICATED MCP ACTIVITY' : 'NO RECENT CLIENT REQUEST') : 'CONNECTION NOT CHECKED'}</strong><small>{mcpStatus ? (mcpStatus.connected ? 'An authenticated MCP request arrived within the five-minute window.' : 'No authenticated MCP request arrived within the five-minute window.') : 'Checks for authenticated client activity observed by the server.'}</small></div></div><button type="button" className="mcp-check-button" onClick={() => void checkMcpConnection()} disabled={mcpStatusBusy || !mcpSetup}>{mcpStatusBusy ? 'CHECKING…' : 'CHECK CONNECTION'}</button></div>
-        <p className="mcp-status-disclaimer">MCP uses request/response sessions; this reports authenticated client activity in the last five minutes, not whether an app has merely saved the endpoint.</p>
-        <div className="mcp-command-heading"><div><span>CODEX SETUP COMMAND</span><small>The bearer token is referenced by name, never included in the command.</small></div><button type="button" className="copy-config" disabled={!mcpSetup} onClick={() => { if (!mcpSetup) return; void navigator.clipboard.writeText(mcpSetup.config).then(() => { setSetupCopied(true); setNotice('Codex MCP command copied. Set MANDATE_MCP_TOKEN in the environment that launches Codex.'); }).catch(() => setNotice('Clipboard access was blocked. Select and copy the command manually.')); }}>{setupCopied ? 'COPIED ✓' : 'COPY COMMAND'}</button></div>
-        <pre className="mcp-config" aria-label="Generated Codex remote MCP command"><code>{mcpSetup?.config ?? 'Enter a valid HTTPS endpoint without embedded credentials.'}</code></pre>
-        {!mcpSetup && <p className="mcp-validation">Enter a valid HTTPS endpoint without embedded credentials to generate the Codex command.</p>}
-        <p className="mcp-token-note">Set your token in Codex’s launch environment—not here. This page never receives it.</p>
+        <div className="mcp-endpoint-row">
+          <label htmlFor="mcp-endpoint">HOSTED MCP URL<input id="mcp-endpoint" value={mcpEndpoint} readOnly aria-label="Hosted Mandate MCP URL"/></label>
+          <button type="button" className="copy-config mcp-url-copy" onClick={() => { void navigator.clipboard.writeText(mcpEndpoint).then(() => { setMcpCopied(true); setNotice('Mandate MCP URL copied. Add it as a remote Streamable HTTP server in your AI client.'); }).catch(() => setNotice('Clipboard access was blocked. Select and copy the URL manually.')); }}>{mcpCopied ? 'COPIED ✓' : 'COPY URL'}</button>
+        </div>
+        <p className="mcp-explanation">Add a <b>remote MCP server</b>, choose <b>Streamable HTTP</b>, and paste this URL. Sign in with OAuth when offered. Otherwise, add <code>Authorization: Bearer &lt;your MCP token&gt;</code> in the client’s private settings—never in the URL or a chat.</p>
+        <div className="mcp-status-row"><div className="mcp-status-copy" aria-live="polite"><span className={mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'mcp-status-dot is-connected' : 'mcp-status-dot is-ready') : 'mcp-status-dot') : 'mcp-status-dot is-unknown'}/><div><strong>{mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'CONNECTED · RECENT AUTHENTICATED REQUEST' : 'SERVICE ONLINE · WAITING FOR CLIENT') : 'SERVICE NEEDS CONFIGURATION') : 'SERVICE STATUS NOT CHECKED'}</strong><small>{mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'A client authenticated within the last five minutes.' : 'The hosted endpoint is ready. Register it in your client and complete its handshake.') : 'The backend token is not configured.') : 'Checks endpoint readiness. A client handshake is needed to show recent activity.'}</small></div></div><button type="button" className="mcp-check-button" onClick={() => void checkMcpConnection()} disabled={mcpStatusBusy}>{mcpStatusBusy ? 'CHECKING…' : 'CHECK SERVICE'}</button></div>
+        <p className="mcp-status-disclaimer">ChatGPT custom MCP apps use OAuth and require an eligible ChatGPT workspace. CLI and desktop clients may instead use a bearer token. Available tools depend on the server configuration and your granted access.</p>
       </div>
-      <details className="mcp-tools-details"><summary>Set up another MCP-compatible client</summary><div className="mcp-tools-list"><p><code>Server URL</code><span>{mcpEndpoint}</span></p><p><code>Transport</code><span>Remote Streamable HTTP over HTTPS.</span></p><p><code>Authorization</code><span>Bearer token from your client’s secret store; never paste it into this page.</span></p></div><small>Client config formats differ. Add the endpoint and bearer header in the MCP client's remote-server settings. ChatGPT web needs OAuth, not this shared-bearer setup.</small></details>
-      <details className="mcp-tools-details"><summary>What tools can connected clients call?</summary><div className="mcp-tools-list"><p><code>propose_mandate</code><span>Generate a schema-checked proposal for the user to review; it cannot authorize it.</span></p><p><code>get_mandate_status</code><span>Read a mandate’s current onchain limits and state.</span></p><p><code>request_bounded_transfer</code><span>Request a transfer within an active mandate, subject to client approval.</span></p></div><small>Model proposals and chain tools appear only when their server-side settings are configured. The AI proposal never submits a transaction or grants authority.</small></details>
     </section>
-    <section className="standalone-page space-page" aria-labelledby="space-title"><div className="page-breadcrumb"><div className="breadcrumb-labels"><span>MANDATE</span><span>/</span><span>SPACE</span></div><div className="page-route-actions"><button type="button" onClick={goBack}>← Back</button><a href="#/">Home</a></div></div><div className="space-hero"><div><p className="kicker">YOUR CONTROL PLANE · MONAD TESTNET</p><h1 id="space-title">One space.<br/><em>Clear boundaries.</em></h1><p>Keep agent access, connection setup, and live permission state close at hand.</p></div><div className="space-orbit" aria-hidden="true"><div className="space-orbit-ring ring-one"/><div className="space-orbit-ring ring-two"/><div className="space-orbit-core">M</div><span>POLICY SPACE · 01</span></div></div><div className="space-stats"><article><span>ACTIVE PERMISSIONS</span><b>{records.filter((item) => item.active).length.toString().padStart(2, '0')}</b><small>READ FROM YOUR CONNECTED WALLET</small></article><article><span>WALLET</span><b>{account ? `${account.slice(0, 6)}…${account.slice(-4)}` : 'NOT CONNECTED'}</b><small>{account ? 'CONNECTED TO MONAD TESTNET' : 'CONNECT TO LOAD ONCHAIN STATE'}</small></article><article><span>AGENT SETUP</span><b>REMOTE MCP</b><small>CODEX SETUP GUIDE AVAILABLE</small></article></div><div className="space-grid"><section className="space-panel"><div className="section-title"><div><p className="kicker">YOUR WORKFLOW</p><h2>Start with the right boundary.</h2></div></div><a className="space-action" href="#/workspace"><span className="space-step">01</span><span><b>Manage permissions</b><small>Create, review, fund, or revoke onchain access.</small></span><i>↗</i></a><a className="space-action" href="#/connections"><span className="space-step">02</span><span><b>Connect an agent</b><small>Connect Codex to the hosted remote MCP service.</small></span><i>↗</i></a></section><section className="space-panel recent-panel"><div className="section-title"><div><p className="kicker">ONCHAIN SNAPSHOT</p><h2>Recent permissions</h2></div><button type="button" className="refresh" onClick={() => void refresh()} disabled={busy}>↻ Refresh</button></div>{records.length === 0 ? <div className="space-empty"><span>—</span><div><b>No permissions loaded</b><p>Connect a wallet, then refresh to read its Monad Testnet records.</p></div></div> : records.slice(0, 4).map((item) => <div className="space-record" key={item.id}><span className={item.active ? 'active-dot' : 'off-dot'}/><code>{item.id.slice(0, 10)}…{item.id.slice(-8)}</code><span>{item.active ? 'ACTIVE' : 'REVOKED'}</span><b>{formatEther(item.total - item.spent)} MON left</b></div>)}</section></div><div className="space-footer"><span>PRIVATE BY DEFAULT · LOCAL AGENT SETUP · ONCHAIN POLICY STATE</span><a href="#/">BACK TO MANDATE <span>↑</span></a></div></section></main></div>;
+    </main></div>
 }
 const mount = document.getElementById('root'); if (!mount) throw new Error('Missing React mount element');
 const root = window.__mandateRoot ?? createRoot(mount);

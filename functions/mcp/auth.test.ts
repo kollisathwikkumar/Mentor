@@ -42,9 +42,10 @@ describe('remote Pages MCP endpoint guard', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
-  it('exposes a read-only status route and fails closed when its database is absent', async () => {
+  it('exposes readiness even when activity storage is absent or unavailable', async () => {
     const missingDb = await onRequest(context(new Request('https://example.test/mcp/status')));
-    expect(missingDb.status).toBe(503);
+    expect(missingDb.status).toBe(200);
+    expect(await missingDb.json()).toMatchObject({ ready: true, connected: false, activityTracking: false });
     const database = activityDatabase(Date.now());
     const response = await onRequest({ request: new Request('https://example.test/mcp/status'), env: { MCP_ACTIVITY_DB: database } });
     expect(response.status).toBe(200);
@@ -55,7 +56,8 @@ describe('remote Pages MCP endpoint guard', () => {
     expect(wrongMethod.status).toBe(405);
     database.first.mockRejectedValue(new Error('database unavailable'));
     const unavailable = await onRequest({ request: new Request('https://example.test/mcp/status'), env: { MCP_ACTIVITY_DB: database } });
-    expect(unavailable.status).toBe(503);
+    expect(unavailable.status).toBe(200);
+    expect(await unavailable.json()).toMatchObject({ ready: false, connected: false, activityTracking: false });
   });
 
   it('records authenticated MCP traffic before serving it and never records rejected traffic', async () => {
@@ -73,7 +75,7 @@ describe('remote Pages MCP endpoint guard', () => {
     expect(initialized.status).toBe(200);
   });
 
-  it('does not execute an authenticated MCP request if its activity write fails', async () => {
+  it('serves authenticated MCP requests if best-effort activity recording fails', async () => {
     const database = activityDatabase();
     database.run.mockResolvedValue({ success: false });
     const response = await onRequest({ request: new Request('https://example.test/mcp', {
@@ -81,6 +83,6 @@ describe('remote Pages MCP endpoint guard', () => {
       headers: { Authorization: `Bearer ${testToken}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test-client', version: '1.0.0' } } }),
     }), env: { MCP_BEARER_TOKEN: testToken, MCP_ACTIVITY_DB: database } });
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(200);
   });
 });
