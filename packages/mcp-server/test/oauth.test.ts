@@ -27,7 +27,7 @@ describe('OAuth account sign-in instructions', () => {
       response_type: 'code',
       code_challenge: 'A'.repeat(43),
       code_challenge_method: 'S256',
-      scope: 'mandate:read',
+      scope: 'mandate:read mandate:balance mandate:propose mandate:transfer',
     });
     const response = await handleOAuthRequest(
       new Request(`https://mandate-console.pages.dev/oauth/authorize?${params}`),
@@ -46,5 +46,10 @@ describe('OAuth account sign-in instructions', () => {
     expect(page).toContain('script type="module" src="/assets/oauth-approve.js"');
     expect(response.headers.get('Content-Security-Policy')).toContain("script-src 'self'");
     expect(page).toContain('Mandate workspace');
+    expect(page).toMatch(/name="granted_scope" value="mandate:read" checked/);
+    expect(page).toMatch(/name="granted_scope" value="mandate:balance">/);
+    expect(page).toMatch(/name="granted_scope" value="mandate:propose">/);
+    expect(page).toMatch(/name="granted_scope" value="mandate:transfer">/);
+    expect(page).toContain('balance, proposal, and transfer stay off unless you select them');
   });
 });

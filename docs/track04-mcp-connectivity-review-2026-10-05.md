@@ -8,7 +8,7 @@
 
 The live Metropolis portal showed the project under **Trust, Identity & AI Infrastructure** as the primary Track 04 target. Track 04 asks for a reusable primitive that other apps can build on. Its judging rubric weights technology 20%, developer experience 20%, originality/track insight 15%, founder/market 25%, and traction/path 20%. The Mera UX bounty expects Mera to be the full account layer. Current portal submission is incomplete: project identity/one-liner are filled, but no primary track is selected and project details, logo, live product, and demo/pitch videos remain outstanding. No market interviews or traction are asserted here.
 
-Mandate's defensible Track 04 story is a portable, identity-bound authorization primitive: a passkey-derived EVM identity or an existing EVM account owns policies; MCP OAuth binds the caller to that identity; scoped tools expose read-only status, a review-only proposal, or a bounded transfer; Monad independently enforces the supported transfer limits. This is broader than payments as a trust/DX primitive, but current onchain enforcement itself is specifically native MON.
+Mandate's defensible Track 04 story is a portable, identity-bound authorization primitive: a passkey-derived EVM identity or an existing EVM account owns policies; MCP OAuth binds the caller to that identity; scoped tools expose read-only mandate status, a separately opt-in public native-MON balance, a review-only proposal, or a bounded transfer; Monad independently enforces the supported transfer limits. This is broader than payments as a trust/DX primitive, but current onchain enforcement itself is specifically native MON.
 
 ### What the current project solves
 
@@ -18,7 +18,7 @@ AI clients otherwise need broad credentials or manual approval for every operati
 
 1. **Passkey-first account path.** Added Mera/WebAuthn PRF creation and unlock using the hosted site's RP ID, BIP-44 EVM address derivation, short-lived Mera/viem signing sessions, and passkey use for app contract transactions. Existing EVM wallets stay available for old Mandate principals and authenticators without PRF.
 2. **OAuth sign-in without a copied secret.** Consent now offers create/unlock passkey buttons plus an existing-wallet fallback. A new passkey is clearly described as a new Mandate account; existing policy owners are told to choose the account that created the policy. This prevents presenting a different passkey account as if it owned an old wallet's mandates.
-3. **Least-privilege OAuth consent.** Consent lists only scopes requested by the client; read is selected by default, proposal and transfer are opt-in. The backend validates submitted scopes against the original request before issuing a code and preserves the requested refresh scope. At least one tool capability is required.
+3. **Least-privilege OAuth consent.** Consent lists only scopes requested by the client; mandate status is selected by default, balance/proposal/transfer are opt-in. The backend validates submitted scopes against the original request before issuing a code and preserves the requested refresh scope. At least one tool capability is required.
 4. **Clearer product positioning.** The MCP URL is the only connection value users copy. Site and README text explains account identity, device passkey verification, non-transaction sign-in, scope controls, and authenticators with WebAuthn PRF. Track 04 notes now distinguish shipped/tested capability from unvalidated roadmap.
 
 ## Security and compatibility review
@@ -26,7 +26,7 @@ AI clients otherwise need broad credentials or manual approval for every operati
 - OAuth still uses PKCE, one-time short-lived nonce-bound EIP-191 signatures, origin/audience checks, hashed tokens, and scope validation. The consent page serves a same-origin compiled module under `script-src 'self'`; no inline executable script was added.
 - The browser stores only the public WebAuthn credential identifier/transports. The PRF output and derived EVM key are used in memory and zeroed/end-called where the library/API permits. App signing sessions automatically end after 15 minutes or when the user locks/disconnects. Mera describes these as **software signing keys**, not hardware-backed keys; page scripts on the relying-party domain can access live derived bytes. Keep this prototype on Testnet and protect the hosted supply chain. A domain/RP-ID migration requires a documented account recovery/export plan.
 - WebAuthn PRF support varies by authenticator. Mera's official compatibility page distinguishes verified providers from unsupported combinations; desktop Chrome's local-profile passkey authenticator is specifically unsupported, while supported password-manager/passkey providers vary. Errors now give a clear fallback rather than an opaque `PRF_UNAVAILABLE` message. Do not claim every device supports passkeys.
-- Transfer remains a consequential onchain action; users must opt into the transfer scope and approve the client action. Status is read-only; proposals are review-only and do not execute or mutate policies.
+- Transfer remains a consequential onchain action; users must opt into the transfer scope and approve the client action. Status and balance are read-only; the balance tool has no address argument and uses only the OAuth-bound principal. Proposals are review-only and do not execute or mutate policies.
 
 ## Verification record
 
@@ -49,6 +49,8 @@ The local release gate and the live production checks below are separate evidenc
 | Logging/monitoring | Note: existing activity capture is aggregate; authentication failures are not individually audited to avoid adding sensitive logs. Configure host-level abuse/rate monitoring. |
 | SSRF / outbound server requests | N/A for the new browser identity path; MCP resource validation remains exact-resource-bound. |
 
+The follow-on `mandate:balance` capability is separately consented and tool-isolated. It adds no caller-controlled address, does not require an agent signer key, and cannot submit a transaction. Balance is public chain state, but exposing it still requires explicit user consent because it associates an account with an MCP client session.
+
 **Security review status:** Issues documented; no CRITICAL/HIGH findings observed. Medium deployment/product follow-up: configure auth rate limiting and establish a supported account-recovery/domain-migration plan before mainnet or broad release.
 
 ### Automated release and integration checks
@@ -58,9 +60,9 @@ The local release gate and the live production checks below are separate evidenc
 | `npm run test:remote-mcp:local` release gate | PASS (exit 0) |
 | Secret scan | PASS — no credential values detected in scanned project files |
 | Strict TypeScript | PASS — all referenced packages and console |
-| Unit tests | PASS — 17 files, 92 tests; 99.34% statements, 98.56% branches, 100% lines/functions |
+| Unit tests (5 Oct follow-up) | PASS — 19 files, 101 tests; 99.35% statements, 98.57% branches, 100% lines/functions |
 | Foundry tests | PASS — 15/15 Monad Vault tests |
-| D1 / MCP / OAuth integration | PASS — local D1 migration, unauthenticated denial, origin/CORS policy, bearer Streamable HTTP handshake, OAuth PKCE, same-origin consent asset, selected-scope grant, refresh rotation/replay denial, read/proposal/chain tool discovery, Monad status read, revoked-mandate denial |
+| D1 / MCP / OAuth integration | PASS — local D1 migration, unauthenticated denial, origin/CORS policy, bearer Streamable HTTP handshake, OAuth PKCE, same-origin consent asset, read-selected / balance-unselected consent, excess-scope rejection, refresh rotation/replay denial, read/proposal/chain tool discovery, Monad status read, revoked-mandate denial |
 | Dependency audit | PASS — `npm audit --omit=dev`: 0 vulnerabilities |
 | Vite production build | PASS — emitted `/assets/oauth-approve.js` and content-hashed app/identity chunks |
 | Live hosted app (Scrapling) | PASS — `https://mandate-console.pages.dev/#/workspace` returned HTTP 200 and displayed the passkey-first onboarding, existing-wallet option, and updated MCP explanation after the direct Pages deploy. |
@@ -70,6 +72,19 @@ The local release gate and the live production checks below are separate evidenc
 | Claude client | PARTIAL — the signed-in Claude web connector launched Mandate's canonical-host OAuth authorization flow. The hosted page showed `mandate:read` selected and `mandate:propose` / `mandate:transfer` unselected. No authorization was granted and no token/tool handshake was completed: the account holder must choose an identity and approve the scopes. |
 | Kimi browser client | NOT TESTED — Kimi's web chat was signed out and did not expose MCP connector settings in that session. |
 | Kimi Code compatibility research | VERIFIED from official Kimi documentation via Scrapling — current Kimi Code supports remote HTTP MCP and OAuth; its TUI offers `/mcp-config`, `/mcp`, and `/mcp-config login <server-name>`. The older Kimi CLI docs warn it is archived. An actual Kimi Code installation/account was not present, so a real Mandate authorization/tool call was not completed. |
+
+### 5 October follow-on: owner-bound balance and recoverable record lookup
+
+The follow-on implementation adds `mandate:balance`, a consent-off-by-default, read-only scope that registers only `get_my_monad_balance`. The server derives its sole address from the signed OAuth principal; the tool accepts no address argument, does not load a transfer signer, and makes no transaction. The frontend saves new mandate IDs locally, verifies every imported ID's current onchain principal before display, provides Copy ID/import for cross-device recovery, and limits automatic event discovery to 100 recent blocks.
+
+The 100-block constraint is from a live call to the configured Monad RPC: `eth_getLogs is limited to a 100 range`. Full historical event discovery is not solved without a maintained indexer/API; the application now handles the public endpoint's limit transparently and lets owners load a known ID instead of presenting a failed search as a chain outage. This source change still needs a Pages deployment and hosted OAuth test before the new scope is counted as live.
+
+Source checks run on this follow-on working tree:
+
+| Command | Result |
+|---|---|
+| `npm run test:remote-mcp:local` | PASS — release prebuild, 19 test files / 101 tests, 15 Solidity tests, secret scan, type checks, local D1/MCP/OAuth scope checks, dependency audit, production build, and Pages Function MCP handshake all passed; exit 0. |
+| `npm run test:browser -- http://127.0.0.1:5173/#/workspace` | PASS — Scrapling 0.4.15 with `--ai-targeted` fetched the workspace and checked record import, MCP explanation, title, and primary form; exit 0. |
 
 ### Deployment notes and client limitations
 

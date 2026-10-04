@@ -4,6 +4,7 @@ import type { MandateSnapshot } from '@mandate/policy';
 
 export interface MandatePort {
   getMandate(mandateId: string): Promise<MandateSnapshot>;
+  getNativeBalance(principal: string): Promise<bigint>;
   executeTransfer(mandate: MandateSnapshot, amount: bigint): Promise<{ readonly transactionHash: string }>;
 }
 
@@ -14,7 +15,7 @@ export interface ViemMandateConfig {
   readonly rpcUrl: string;
   readonly chainId: number;
   readonly contractAddress: string;
-  readonly agentPrivateKey: Hex;
+  readonly agentPrivateKey?: Hex;
 }
 
 const transferIntentTypes = {
@@ -30,13 +31,13 @@ const transferIntentTypes = {
 export class ViemMandatePort implements MandatePort {
   readonly #address: Address;
   readonly #publicClient: PublicClient<HttpTransport, Chain>;
-  readonly #walletClient: WalletClient<HttpTransport, Chain, LocalAccount>;
-  readonly #account: LocalAccount;
+  readonly #walletClient?: WalletClient<HttpTransport, Chain, LocalAccount>;
+  readonly #account?: LocalAccount;
   readonly #chain: Chain;
 
   constructor(config: ViemMandateConfig) {
     if (!isAddress(config.contractAddress)) throw new TypeError('MANDATE_CONTRACT_ADDRESS must be a valid address');
-    if (!/^0x[0-9a-fA-F]{64}$/.test(config.agentPrivateKey)) throw new TypeError('MANDATE_AGENT_PRIVATE_KEY must be a 32-byte hex key');
+    if (config.agentPrivateKey !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(config.agentPrivateKey)) throw new TypeError('MANDATE_AGENT_PRIVATE_KEY must be a 32-byte hex key');
     const rpc = new URL(config.rpcUrl);
     if (rpc.protocol !== 'https:' && rpc.hostname !== 'localhost' && rpc.hostname !== '127.0.0.1') {
       throw new TypeError('RPC endpoint must use HTTPS or localhost');
@@ -49,9 +50,11 @@ export class ViemMandatePort implements MandatePort {
       nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
       rpcUrls: { default: { http: [config.rpcUrl] } },
     });
-    this.#account = privateKeyToAccount(config.agentPrivateKey);
     this.#publicClient = createPublicClient({ chain: this.#chain, transport: http(config.rpcUrl) });
-    this.#walletClient = createWalletClient({ account: this.#account, chain: this.#chain, transport: http(config.rpcUrl) });
+    if (config.agentPrivateKey !== undefined) {
+      this.#account = privateKeyToAccount(config.agentPrivateKey);
+      this.#walletClient = createWalletClient({ account: this.#account, chain: this.#chain, transport: http(config.rpcUrl) });
+    }
   }
 
   async getMandate(mandateId: string): Promise<MandateSnapshot> {
@@ -80,7 +83,13 @@ export class ViemMandatePort implements MandatePort {
     };
   }
 
+  async getNativeBalance(principal: string): Promise<bigint> {
+    if (!isAddress(principal)) throw new TypeError('principal must be a valid EVM address');
+    return this.#publicClient.getBalance({ address: principal as Address });
+  }
+
   async executeTransfer(mandate: MandateSnapshot, amount: bigint): Promise<TransferReceipt> {
+    if (!this.#walletClient || !this.#account) throw new Error('Transfer signing is not configured');
     if (mandate.agentSigner.toLowerCase() !== this.#account.address.toLowerCase()) {
       throw new Error('Configured signer does not match the mandate agent signer');
     }
@@ -117,15 +126,16 @@ export function createViemPort(env: Readonly<Record<string, string | undefined>>
   const rpcUrl = env.MONAD_RPC_URL;
   const contractAddress = env.MANDATE_CONTRACT_ADDRESS;
   const agentPrivateKey = env.MANDATE_AGENT_PRIVATE_KEY;
-  if (rpcUrl === undefined || contractAddress === undefined || agentPrivateKey === undefined) {
-    throw new Error('Set MONAD_RPC_URL, MANDATE_CONTRACT_ADDRESS, and MANDATE_AGENT_PRIVATE_KEY in the backend environment');
+  if (rpcUrl === undefined || contractAddress === undefined) {
+    throw new Error('Set MONAD_RPC_URL and MANDATE_CONTRACT_ADDRESS in the backend environment');
   }
+  if (agentPrivateKey !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(agentPrivateKey)) throw new TypeError('MANDATE_AGENT_PRIVATE_KEY must be a 32-byte hex key');
   const chainId = Number(env.MONAD_CHAIN_ID ?? '10143');
   if (!Number.isSafeInteger(chainId) || chainId <= 0) throw new TypeError('MONAD_CHAIN_ID must be a positive integer');
   return new ViemMandatePort({
     rpcUrl,
     chainId,
     contractAddress,
-    agentPrivateKey: agentPrivateKey as Hex,
+    ...(agentPrivateKey === undefined ? {} : { agentPrivateKey: agentPrivateKey as Hex }),
   });
 }

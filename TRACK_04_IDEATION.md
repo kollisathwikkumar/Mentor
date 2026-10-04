@@ -19,7 +19,8 @@ Track 04 is **Trust, Identity & AI Infrastructure**. The portal describes a reus
 | Who is the user? | A passkey-derived EVM account (Mera/WebAuthn PRF) or an existing EVM wallet; OAuth binds the MCP principal to that address. | The authenticator's PRF support is required for passkeys; wallet compatibility remains a fallback. |
 | What is the trust primitive? | A Monad Testnet `MandateVault` policy bound to a principal, agent signer, one recipient, native MON per-call/total limits, expiry, nonce, and revocation. | It is a narrow financial policy, not arbitrary tool/API authorization. |
 | How do AI clients reach it? | One vendor-neutral remote Streamable HTTP MCP endpoint with OAuth 2.1 + PKCE, dynamic registration, per-tool scopes, and the same identity flow. | Works only in MCP clients implementing the relevant remote transport and OAuth flow. |
-| Is it more than transfers? | `mandate:read` provides read-only status; `mandate:propose` produces a review-only proposal; `mandate:transfer` requests a bounded action. The user can grant only requested scopes. | Proposals do not execute tasks or create/update policies. The front-page conversation is a local draft, not an AI agent runtime. |
+| Is it more than transfers? | `mandate:read` inspects status for a supplied mandate ID; optional `mandate:balance` reads the authenticated account's public native MON balance; `mandate:propose` produces a review-only proposal; `mandate:transfer` requests a bounded action. Every scope is separately gated, and balance is not selected by default. | The status tool rechecks the authenticated principal against the mandate owner. The balance tool accepts no address input and reads only the OAuth-bound principal. Proposals do not execute tasks or create/update policies. The front-page conversation is a local draft, not an AI agent runtime. |
+| How are older policies found? | New IDs are saved in this browser; owners can copy/import an ID on another device. The UI only auto-searches recent events. | Monad's configured public RPC rejects `eth_getLogs` ranges larger than 100 blocks. There is no indexed event service configured, so historical discovery is not claimed as complete. |
 | What should not be claimed? | Universal agent execution, general-purpose API permissions, production-ready custody, a live Mera bounty integration, user traction, or finished third-party integrations. | These are roadmap/validation work, not currently shipped proof. |
 
 **Hackathon thesis:** Mandate is a reusable identity-bound authorization layer for AI tools. A passkey makes the user account approachable; scoped MCP capabilities make delegation portable across model vendors; an independently checked onchain policy makes the supported transfer boundary enforceable. The best demo should show the read-only and review-only paths before an explicitly opted-in transfer, including a denial when the request exceeds the rule.
@@ -40,7 +41,7 @@ This is a hypothesis, not a claim that no competing permission products exist. I
 
 ## 3. Product definition
 
-**Long-term Mandate** is a security and authorization layer for autonomous AI agents. The **current prototype** implements the narrower path: a user defines fixed fields in the console, authorizes a bounded native-MON policy on Monad Testnet, and exposes owner-scoped read/propose/transfer MCP tools through OAuth. It does not parse the local chat draft into a policy or execute arbitrary work. A deterministic gateway and the Monad contract independently enforce the supported transfer path.
+**Long-term Mandate** is a security and authorization layer for autonomous AI agents. The **current prototype** implements the narrower path: a user defines fixed fields in the console, authorizes a bounded native-MON policy on Monad Testnet, and exposes owner-scoped status/balance reads, review-only proposal, and bounded transfer MCP tools through OAuth. It does not parse the local chat draft into a policy or execute arbitrary work. A deterministic gateway and the Monad contract independently enforce the supported transfer path.
 
 **Core principle:** the model proposes; the user authorizes; deterministic software and the contract enforce.
 
@@ -123,7 +124,7 @@ Monad's role must be real: it holds the live mandate state and independently enf
 - One action: native MON transfer to one approved recipient on Monad Testnet.
 - Per-transfer limit, total budget, expiry, nonce/replay protection, and revocation.
 - Funded MandateVault and independent contract enforcement.
-- MCP server with read-only status and bounded-transfer tools.
+- MCP server with authenticated mandate-status lookup, separately scoped authenticated-account balance read, review-only proposal, and separately scoped bounded-transfer tools.
 - Deterministic test harness and a reproducible working allow/deny/revoke scenario.
 - Clear setup, architecture, limitations, public repository, and demo evidence.
 

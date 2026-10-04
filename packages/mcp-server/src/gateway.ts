@@ -6,6 +6,7 @@ import {
   type TransferRequest,
   type DenialReason,
 } from '@mandate/policy';
+import { formatEther } from 'viem';
 
 export interface TransferReceipt {
   readonly transactionHash: string;
@@ -13,6 +14,7 @@ export interface TransferReceipt {
 
 export interface MandatePort {
   getMandate(mandateId: string): Promise<MandateSnapshot>;
+  getNativeBalance(principal: string): Promise<bigint>;
   executeTransfer(mandate: MandateSnapshot, amount: bigint): Promise<TransferReceipt>;
 }
 
@@ -34,6 +36,12 @@ export interface MandateStatus {
 export type TransferResult =
   | { readonly status: 'denied'; readonly reason: DenialReason }
   | { readonly status: 'submitted'; readonly transactionHash: string };
+
+export interface NativeBalance {
+  readonly address: string;
+  readonly balanceWei: string;
+  readonly balanceMon: string;
+}
 
 export class MandateGateway {
   readonly #port: MandatePort;
@@ -62,6 +70,12 @@ export class MandateGateway {
       nextNonce: mandate.nextNonce.toString(),
       expiresAt: mandate.expiresAt,
     };
+  }
+
+  async getNativeBalance(principal: string): Promise<NativeBalance> {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(principal)) throw new TypeError('principal must be a valid EVM address');
+    const balance = await this.#port.getNativeBalance(principal);
+    return { address: principal, balanceWei: balance.toString(), balanceMon: formatEther(balance) };
   }
 
   async requestTransfer(input: TransferRequest): Promise<TransferResult> {

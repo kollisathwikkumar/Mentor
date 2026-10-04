@@ -87,7 +87,7 @@ try {
   const authorizeUrl = new URL(`${baseUrl}/oauth/authorize`);
   authorizeUrl.search = new URLSearchParams({
     response_type: 'code', client_id: registration.client_id, redirect_uri: redirectUri,
-    code_challenge: challenge, code_challenge_method: 'S256', scope: 'mandate:read offline_access', state,
+    code_challenge: challenge, code_challenge_method: 'S256', scope: 'mandate:read mandate:balance offline_access', state,
     resource: endpoint,
   }).toString();
   const authorizeResponse = await fetch(authorizeUrl);
@@ -103,6 +103,8 @@ try {
   assert.match(authorizeHtml, /Use an existing wallet instead/);
   assert.match(authorizeHtml, /Passkeys need an authenticator with WebAuthn PRF support/);
   assert.match(authorizeHtml, /Mandate workspace/);
+  assert.match(authorizeHtml, /Read your native MON balance on Monad Testnet/);
+  assert.match(authorizeHtml, /balance, proposal, and transfer stay off unless you select them/);
   assert.doesNotMatch(authorizeHtml, /Mandate access token/);
   const field = (name) => authorizeHtml.match(new RegExp(`name="${name}" value="([^"]+)"`))?.[1];
   const walletNonce = field('wallet_nonce');
@@ -188,7 +190,7 @@ try {
   clients.add(oauthClient);
   await oauthClient.connect(new StreamableHTTPClientTransport(new URL(endpoint), { requestInit: { headers: { authorization: `Bearer ${oauthTokens.access_token}` } } }));
   const oauthToolNames = (await oauthClient.listTools()).tools.map((tool) => tool.name).sort();
-  assert.deepEqual(oauthToolNames, ['get_mandate_status'], 'OAuth scopes must expose only the granted read-only tool.');
+  assert.deepEqual(oauthToolNames, ['get_mandate_status'], 'Granting only mandate:read must not expose balance, proposal, or transfer tools.');
   const refreshed = await fetch(`${baseUrl}/oauth/token`, {
     method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'refresh_token', client_id: registration.client_id, refresh_token: oauthTokens.refresh_token, resource: endpoint }),
@@ -202,7 +204,7 @@ try {
   });
   assert.equal(replay.status, 400, 'A rotated refresh token cannot be replayed.');
 
-  console.log(`PASS: local Pages Function started; auth/CORS/status passed; bearer Streamable HTTP initialized; OAuth PKCE, scoped tools, refresh rotation and replay rejection passed; review-only model + chain tools listed; ${modelResult} live Monad status read; revoked mandate transfer denied without transaction.`);
+  console.log(`PASS: local Pages Function started; auth/CORS/status passed; bearer Streamable HTTP initialized; OAuth PKCE, separately scoped balance consent, read-only tool discovery, refresh rotation and replay rejection passed; review-only model + chain tools listed; ${modelResult} live Monad status read; revoked mandate transfer denied without transaction.`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   const safeProviderDiagnostics = logs.split('\n').filter((line) => line.includes('Gemini model transport failed') || line.includes('Gemini model provider returned HTTP'));

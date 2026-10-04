@@ -456,3 +456,13 @@
 .identity-buttons button{padding:10px 13px;font-size:9px}
 .identity-buttons .text-button{border:0;background:transparent;color:#b9a3ce;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 @media(max-width:720px){.identity-actions{grid-template-columns:1fr}.identity-buttons{justify-content:flex-start}.identity-actions small{grid-column:auto}}
+.record-import{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(220px,1fr) auto;gap:9px;align-items:center;margin:0 0 13px;padding:12px 14px;border:1px solid rgba(205,188,226,.15);background:rgba(12,11,15,.55)}
+.record-import label{color:#d7c9e3;font-size:10px;font-weight:600}
+.record-import input{min-width:0;height:34px;padding:0 10px;border:1px solid rgba(205,188,226,.2);border-radius:3px;background:#0b0d0e;color:#e4e9e3;font:10px var(--mono)}
+.record-import input:focus{outline:1px solid #b79bd0}
+.record-import input::placeholder{color:#66606a}
+.record-import button{height:34px;padding:0 11px;border:1px solid rgba(205,188,226,.25);background:transparent;color:#ded2e8;font-size:9px}
+.record-import button:disabled{opacity:.5}
+.record-import small{grid-column:1/-1;color:#89818f;font-size:8px;line-height:1.5}
+.record .copy-id{align-self:flex-start;border:0;background:transparent;padding:0;color:#bfa8d2;font-size:8px;text-decoration:underline;text-underline-offset:2px}
+@media(max-width:650px){.record-import{grid-template-columns:1fr auto}.record-import label,.record-import small{grid-column:1/-1}.record-import input{grid-column:1}}

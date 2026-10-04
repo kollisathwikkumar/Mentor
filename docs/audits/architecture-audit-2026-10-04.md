@@ -30,5 +30,5 @@ The implementation follows the repository's proposed boundaries: Solidity + Foun
 
 - Foundry emits expected `block.timestamp` lint notices because expiry is a core contract invariant; this depends on consensus block time, and timestamps are not used for sub-block precision.
 - Production console bundle is about 516 kB minified before gzip; Vite warns that one JS chunk exceeds 500 kB. It is ~157 kB gzip. Code splitting can reduce initial payload later.
-- The console reads events from a configurable deployment block. Set `VITE_MANDATE_DEPLOYMENT_BLOCK` near contract deployment for public RPCs with range limits.
+- The console searches only a recent 100-block event window because the configured Monad public RPC rejects wider `eth_getLogs` ranges. It persists newly created mandate IDs per account in browser storage and offers copy/import for older or cross-device IDs; there is no server-side indexer or complete historical discovery.
 - No contract address is deployed/configured, so testnet end-to-end and wallet transaction checks remain pending.

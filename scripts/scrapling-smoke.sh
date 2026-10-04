@@ -10,7 +10,9 @@ if [[ ! -x "$scrapling" ]]; then
   exit 2
 fi
 "$scrapling" extract fetch "$url" "$output" --ai-targeted --timeout 30000
-grep -q 'Verifiable execution' "$output"
-grep -q 'Create a mandate' "$output"
+grep -q 'Permission for agents' "$output"
+grep -q 'Agent permissions' "$output"
+grep -q 'Have an existing permission ID' "$output"
+grep -q 'separately choose whether to share your account' "$output"
 python3 -c "from pathlib import Path; Path('$output').unlink(missing_ok=True)"
 printf 'Scrapling smoke passed: console title and mandate form are present.\n'

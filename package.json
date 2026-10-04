@@ -20,6 +20,7 @@
     "test:contracts": "forge test",
     "test:gemini-mcp:live": "npm run build --workspace @mandate/mcp-server && node --env-file=.env.local scripts/test-gemini-mcp-live.mjs",
     "test:gemini-mcp:production": "node --env-file=.env.local scripts/test-production-gemini-mcp.mjs",
+    "test:balance-mcp:production": "npm run build --workspace @mandate/mcp-server && node scripts/test-production-balance-mcp.mjs",
     "test:remote-mcp:local": "npm run build --workspace @mandate/console && node --env-file=.env.local scripts/test-remote-pages-mcp.mjs",
     "test:mcp-status:local": "node scripts/test-mcp-status-local.mjs",
     "test:testnet-flow": "npm run build --workspace @mandate/mcp-server && node --env-file=.env.local scripts/test-testnet-live.mjs",

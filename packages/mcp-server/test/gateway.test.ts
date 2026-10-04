@@ -19,6 +19,7 @@ const snapshot: MandateSnapshot = {
 function createPort(): MandatePort {
   return {
     getMandate: vi.fn(async () => snapshot),
+    getNativeBalance: vi.fn(async () => 1_250_000_000_000_000_000n),
     executeTransfer: vi.fn(async () => ({ transactionHash: `0x${'b'.repeat(64)}` })),
   };
 }
@@ -51,6 +52,25 @@ describe('MCP gateway', () => {
       spent: '0', remaining: snapshot.totalLimit.toString(), deposited: snapshot.deposited.toString(),
       nextNonce: '0', expiresAt: snapshot.expiresAt,
     });
+  });
+
+  it('returns the native balance for the authenticated EVM principal without converting through floating point', async () => {
+    const owner = snapshot.principal;
+    const port = createPort();
+    const gateway = new MandateGateway(port);
+    await expect(gateway.getNativeBalance(owner)).resolves.toEqual({
+      address: owner,
+      balanceWei: '1250000000000000000',
+      balanceMon: '1.25',
+    });
+    expect(port.getNativeBalance).toHaveBeenCalledWith(owner);
+  });
+
+  it('rejects invalid owners before making an RPC balance request', async () => {
+    const port = createPort();
+    const checkedGateway = new MandateGateway(port);
+    await expect(checkedGateway.getNativeBalance('not-an-address')).rejects.toThrow('principal must be a valid EVM address');
+    expect(port.getNativeBalance).not.toHaveBeenCalled();
   });
 });
 

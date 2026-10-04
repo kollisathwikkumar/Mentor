@@ -5,6 +5,7 @@ import { mandateVaultAbi } from '@mandate/sdk/abi';
 import { validateAuthorizationDraft } from './authorization.js';
 import { fetchMcpConnectionStatus, type McpConnectionStatus } from './mcp-status.js';
 import { registeredTaskCapabilities } from './capabilities.js';
+import { getSavedMandateIds, rememberMandateId } from './mandate-index.js';
 import { submitConversation, type ConversationTurn } from './conversation.js';
 import { createPasskeyAccount, explainPasskeyError, unlockPasskeyAccount, type PasskeyAccountSession } from './passkey-account.js';
 import './style.css';
@@ -83,6 +84,7 @@ function App(): React.JSX.Element {
     passkeySessionRef.current?.end();
   }, []);
   const [records, setRecords] = React.useState<readonly RecordView[]>([]);
+  const [importId, setImportId] = React.useState('');
   const [task, setTask] = React.useState('');
   const [composerText, setComposerText] = React.useState('');
   const [conversation, setConversation] = React.useState<readonly ConversationTurn[]>([{ id: 'welcome', role: 'assistant', content: 'Tell me what you want to get done. Include the goal, constraints, or deadline—whatever context matters.' }]);
@@ -149,18 +151,45 @@ function App(): React.JSX.Element {
     if (!owner || !contractAddress) { setNotice('Configure the contract address and connect a wallet.'); return; }
     setBusy(true);
     try {
-      const logs = await reader.getLogs({ address: contractAddress, event: { type: 'event', name: 'MandateCreated', anonymous: false, inputs: [
-        { name: 'mandateId', type: 'bytes32', indexed: true }, { name: 'principal', type: 'address', indexed: true }, { name: 'agentSigner', type: 'address', indexed: true }, { name: 'recipient', type: 'address', indexed: false },
-      ] }, args: { principal: owner }, fromBlock: deploymentBlock });
-      const ids = [...new Set(logs.flatMap((log) => log.args.mandateId ? [log.args.mandateId] : []))];
+      let ids = [...getSavedMandateIds(window.localStorage, owner)];
+      let eventHistoryLimited = false;
+      try {
+        const latestBlock = await reader.getBlockNumber();
+        const recentWindowStart = latestBlock > 99n ? latestBlock - 99n : 0n;
+        const fromBlock = deploymentBlock > recentWindowStart ? deploymentBlock : recentWindowStart;
+        const logs = await reader.getLogs({ address: contractAddress, event: { type: 'event', name: 'MandateCreated', anonymous: false, inputs: [
+          { name: 'mandateId', type: 'bytes32', indexed: true }, { name: 'principal', type: 'address', indexed: true }, { name: 'agentSigner', type: 'address', indexed: true }, { name: 'recipient', type: 'address', indexed: false },
+        ] }, args: { principal: owner }, fromBlock, toBlock: latestBlock });
+        ids = [...new Set([...ids, ...logs.flatMap((log) => log.args.mandateId ? [log.args.mandateId] : [])])];
+        for (const mandateId of ids) rememberMandateId(window.localStorage, owner, mandateId);
+      } catch { eventHistoryLimited = true; }
       const found = await Promise.all(ids.map(async (mandateId): Promise<RecordView | undefined> => {
         try { const s = await reader.readContract({ address: contractAddress, abi: mandateVaultAbi, functionName: 'getMandate', args: [mandateId] });
+          if (s.principal.toLowerCase() !== owner.toLowerCase()) return undefined;
           return { id: mandateId, recipient: s.approvedRecipient, total: s.totalLimit, spent: s.spent, deposited: s.deposited, active: s.active };
         } catch { return undefined; }
       }));
-      setRecords(found.filter((item): item is RecordView => item !== undefined).reverse()); setNotice('Mandates refreshed from Monad Testnet.');
+      const verified = found.filter((item): item is RecordView => item !== undefined);
+      setRecords(verified.reverse());
+      setNotice(eventHistoryLimited
+        ? (verified.length > 0 ? 'Saved permissions are loaded. To find older permissions, import their ID; automatic history search is limited by the public RPC.' : 'Automatic history search is limited by the public RPC. Paste an existing permission ID below, or create a new one here.')
+        : 'Mandates refreshed from Monad Testnet.');
     } catch { setNotice('Could not read contract state. Verify address and RPC settings.'); }
     finally { setBusy(false); }
+  }
+  function importMandate(event: React.FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    if (!account) { setNotice('Connect the account that owns this permission first.'); return; }
+    if (!/^0x[0-9a-fA-F]{64}$/.test(importId)) { setNotice('Enter a valid 32-byte permission ID.'); return; }
+    rememberMandateId(window.localStorage, account, importId);
+    setId(importId as Hex);
+    setImportId('');
+    setNotice('Permission ID saved for this browser and account. Checking its onchain owner now.');
+    void refresh(account);
+  }
+  async function copyPermissionId(mandateId: Hex): Promise<void> {
+    try { await navigator.clipboard.writeText(mandateId); setNotice('Permission ID copied. You can use it to load this permission on another device.'); }
+    catch { setNotice('Clipboard access was blocked. Select the full permission ID from the optional funding form to copy it manually.'); }
   }
   async function checkMcpConnection(): Promise<void> {
     setMcpStatusBusy(true);
@@ -225,7 +254,7 @@ function App(): React.JSX.Element {
       const tx = await wallet.writeContract({ address: contractAddress, abi: mandateVaultAbi, functionName: 'createMandate', args: [validation.agent, validation.recipient, validation.perCallWei, validation.totalWei, validation.expiresAt, policyHash, salt] });
       await reader.waitForTransactionReceipt({ hash: tx });
       const mandateId = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }, { type: 'address' }, { type: 'bytes32' }], [10143n, contractAddress, account, salt]));
-      setId(mandateId); setReviewOpen(false); setNotice('Agent access authorized. This registered the permission; it did not send MON to the recipient.'); await refresh(account);
+      setId(mandateId); rememberMandateId(window.localStorage, account, mandateId); setReviewOpen(false); setNotice('Agent access authorized. This registered the permission; it did not send MON to the recipient.'); await refresh(account);
     } catch { setNotice('Authorization did not complete. Review the wallet request.'); }
     finally { setBusy(false); }
   }
@@ -286,7 +315,8 @@ function App(): React.JSX.Element {
         <details className="funding-details"><summary>Optional · prepare funds for a MON permission</summary><p>Funding is a separate wallet action. Deposited MON stays in escrow until a later authorized agent action or withdrawal after revocation.</p><form className="panel" onSubmit={(event) => void fund(event)}><label>Permission ID<input value={id} onChange={(event) => setId(event.target.value)} placeholder="Created after authorization" required autoComplete="off"/></label><label>Escrow amount <span>MON</span><input value={deposit} onChange={(event) => setDeposit(event.target.value)} inputMode="decimal" placeholder="e.g. 0.02" required/></label><button className="secondary" disabled={busy}>Add escrow funds <b>↗</b></button></form></details></div></div>
     </> : null}
     <section className="records"><div className="section-title"><div><p className="kicker">LIVE ACCESS STATE</p><h2>Agent permissions <sup>{records.length.toString().padStart(2, '0')}</sup></h2></div><button className="refresh" onClick={() => void refresh()} disabled={busy}>↻ &nbsp; Refresh records</button></div>
-      {records.length === 0 ? <div className="empty"><div className="monogram">M</div><div><b>No agent permissions found for this account</b><p>A permission appears here only under the wallet account that created it. If you expected one, connect that same account. New to Mandate? Create a permission above first.</p></div><small>CHAIN VERIFIED · 10143</small></div> : records.map((item) => <article className="record" key={item.id}><div><small>ACCESS ID</small><code>{item.id.slice(0, 10)}…{item.id.slice(-8)}</code></div><div><small>FIXED DESTINATION</small><code>{item.recipient.slice(0, 6)}…{item.recipient.slice(-4)}</code></div><div><small>USED / TOTAL AUTHORITY</small><b>{formatEther(item.spent)} <i>/ {formatEther(item.total)} MON</i></b></div><div><small>ESCROW AVAILABLE</small><b>{formatEther(item.deposited)} MON</b></div><div><i className={item.active ? 'active-dot' : 'off-dot'}/>{item.active ? 'Active' : 'Revoked'}</div>{item.active && <button className="revoke" onClick={() => void revoke(item.id)} disabled={busy}>Revoke access</button>}</article>)}
+      <form className="record-import" onSubmit={importMandate}><label htmlFor="permission-import">Have an existing permission ID?</label><input id="permission-import" value={importId} onChange={(event) => setImportId(event.target.value)} placeholder="Paste the 0x… permission ID" autoComplete="off" spellCheck={false}/><button type="submit" disabled={busy}>Load permission</button><small>New permissions are saved automatically in this browser. Use Copy ID to bring one from another device.</small></form>
+      {records.length === 0 ? <div className="empty"><div className="monogram">M</div><div><b>No agent permissions found for this account</b><p>Connect the account that created a permission. New to Mandate? Create one above or paste its ID here.</p></div><small>CHAIN VERIFIED · 10143</small></div> : records.map((item) => <article className="record" key={item.id}><div><small>ACCESS ID</small><code title={item.id}>{item.id.slice(0, 10)}…{item.id.slice(-8)}</code><button className="copy-id" type="button" onClick={() => void copyPermissionId(item.id)}>Copy ID</button></div><div><small>FIXED DESTINATION</small><code>{item.recipient.slice(0, 6)}…{item.recipient.slice(-4)}</code></div><div><small>USED / TOTAL AUTHORITY</small><b>{formatEther(item.spent)} <i>/ {formatEther(item.total)} MON</i></b></div><div><small>ESCROW AVAILABLE</small><b>{formatEther(item.deposited)} MON</b></div><div><i className={item.active ? 'active-dot' : 'off-dot'}/>{item.active ? 'Active' : 'Revoked'}</div>{item.active && <button className="revoke" onClick={() => void revoke(item.id)} disabled={busy}>Revoke access</button>}</article>)}
     </section><footer><span>MANDATE · AGENT ACCESS CONTROL</span><span>POLICY IS ENFORCED ON MONAD TESTNET <i>●</i></span></footer>
     {reviewOpen && <div className="modal-backdrop"><section className="review-sheet" role="dialog" aria-modal="true" aria-labelledby="review-title"><p className="kicker">STEP 03 · HUMAN REVIEW</p><h2 id="review-title">Review agent access</h2><p className="review-intro">Review the independent onchain permission. This does not execute the task from your conversation.</p><dl className="review-grid"><div><dt>Task</dt><dd>{task}</dd></div><div><dt>Available permission</dt><dd>{registeredTaskCapabilities[0]?.label ?? 'No registered action'} · not connected to this task execution</dd></div><div><dt>Agent signer</dt><dd>{agent}</dd></div><div><dt>Fixed destination</dt><dd>{recipient}</dd></div><div><dt>Per-action maximum</dt><dd>{perCall} MON</dd></div><div><dt>Total authority</dt><dd>{total} MON</dd></div><div><dt>Expires</dt><dd>{new Date(expiry).toLocaleString()}</dd></div></dl><div className="review-note"><b>No payment happens here.</b> Wallet confirmation records this access policy on Monad. Escrow funding and any later agent action are separate.</div><div className="review-actions"><button className="secondary" type="button" onClick={() => setReviewOpen(false)}>Edit policy</button>{!account && <button className="secondary" type="button" onClick={() => void connect()}>Connect wallet</button>}<button className="primary" type="button" onClick={() => void authorize()} disabled={!account || busy}>{busy ? 'Waiting for wallet…' : 'Authorize agent access'} <b>↗</b></button></div></section></div>}
   </main></div>
@@ -300,7 +330,7 @@ function App(): React.JSX.Element {
           <label htmlFor="mcp-endpoint">HOSTED MCP URL<input id="mcp-endpoint" value={mcpEndpoint} readOnly aria-label="Hosted Mandate MCP URL"/></label>
           <button type="button" className="copy-config mcp-url-copy" onClick={() => { void navigator.clipboard.writeText(mcpEndpoint).then(() => { setMcpCopied(true); setNotice('Mandate MCP URL copied. Add it as a remote Streamable HTTP server in your AI client.'); }).catch(() => setNotice('Clipboard access was blocked. Select and copy the URL manually.')); }}>{mcpCopied ? 'COPIED ✓' : 'COPY URL'}</button>
         </div>
-        <p className="mcp-explanation">Add a <b>remote MCP server</b> and paste this URL. At sign-in, use your Mandate passkey—your device verifies you and picks the account automatically. No address, API key, or browser extension to find. Passkeys require WebAuthn PRF support; if your authenticator does not support it, use an existing EVM wallet instead. Sign-in is a free message signature, not a transaction. Choose read-only status, review-only proposal, or transfer access only when you need it.</p>
+        <p className="mcp-explanation">Add a <b>remote MCP server</b> and paste this URL. At sign-in, use your Mandate passkey—your device verifies you and picks the account automatically. No address, API key, or browser extension to find. Passkeys require WebAuthn PRF support; if your authenticator does not support it, use an existing EVM wallet instead. Sign-in is a free message signature, not a transaction. Read mandate status by ID, and separately choose whether to share your account’s public MON balance. Proposals are review-only; transfer access is optional.</p>
         <div className="mcp-status-row"><div className="mcp-status-copy" aria-live="polite"><span className={mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'mcp-status-dot is-connected' : 'mcp-status-dot is-ready') : 'mcp-status-dot') : 'mcp-status-dot is-unknown'}/><div><strong>{mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'CONNECTED · RECENT AUTHENTICATED REQUEST' : 'SERVICE ONLINE · WAITING FOR CLIENT') : 'SERVICE NEEDS CONFIGURATION') : 'SERVICE STATUS NOT CHECKED'}</strong><small>{mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'A client authenticated within the last five minutes.' : 'The hosted endpoint is ready. Register it in your client and complete its handshake.') : 'The hosted authorization service is not ready. Try again later.') : 'Checks endpoint readiness. A client handshake is needed to show recent activity.'}</small></div></div><button type="button" className="mcp-check-button" onClick={() => void checkMcpConnection()} disabled={mcpStatusBusy}>{mcpStatusBusy ? 'CHECKING…' : 'CHECK SERVICE'}</button></div>
         <p className="mcp-status-disclaimer">The same OAuth connection works across clients that support remote MCP authentication. Access is tied to your Mandate account; read and transfer requests are limited to mandates owned by that account. Proposals are review-only; a proposal does not change a policy or send a transaction. The AI client may ask separately before a transfer request.</p>
       </div>
