@@ -2,7 +2,7 @@
 
 **Decision goal:** choose components because they match Mandate's trust boundaries, the hosted-inference choice and cost controls, the hackathon's working-product requirements, and the actual development machine—not because a tool is fashionable.  
 **Current machine checked:** Apple Silicon M2, 16 GB RAM; Node `v26.7.0` and npm `11.19.0` are installed; Foundry (`forge`) is not installed.  
-**Implementation status (2026-10-04):** The local vertical slice uses Solidity/Foundry, TypeScript/npm workspaces, viem/Zod, MCP stdio/Streamable HTTP, and React/Vite. Model-provider configuration and inference are paused; no API key is required or used by the current runtime.
+**Implementation status (2026-10-04):** The vertical slice uses Solidity/Foundry, TypeScript/npm workspaces, viem/Zod, MCP stdio/Streamable HTTP, and React/Vite. A backend-only Google Gemini API adapter targets Gemini 3.8 Flash through `gemini-3.8-flash`; its credential is backend-only.
 
 ## Recommendation in one line
 

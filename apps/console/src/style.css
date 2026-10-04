@@ -293,6 +293,18 @@
 .mcp-endpoint-row label{display:block;flex:1;color:#b4bbb4;font:8px var(--mono);letter-spacing:.1em}
 .mcp-endpoint-row input{display:block;width:100%;height:39px;margin-top:8px;padding:0 11px;border:1px solid #363d38;border-radius:2px;background:#090b0a;color:#e7ebe5;font:10px var(--mono);outline:none}
 .mcp-endpoint-row input:focus{border-color:#a6ada6}
+.mcp-status-row{display:flex;justify-content:space-between;align-items:center;gap:18px;margin:0 0 9px;padding:13px 14px;border:1px solid #343a35;background:#0c0e0d}
+.mcp-status-copy{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.mcp-status-copy>div{display:grid;gap:5px;min-width:0}
+.mcp-status-copy strong{color:#e7ebe5;font:8px var(--mono);letter-spacing:.09em}
+.mcp-status-copy small{color:#929a93;font-size:9px;line-height:1.5;overflow-wrap:anywhere}
+.mcp-status-dot{flex:0 0 auto;width:8px;height:8px;margin-top:2px;border-radius:50%;background:#a57c43;box-shadow:0 0 10px #a57c4340}
+.mcp-status-dot.is-connected{background:#7bc19b;box-shadow:0 0 10px #7bc19b70}
+.mcp-status-dot.is-unknown{background:#747b75}
+.mcp-page .mcp-check-button{flex:0 0 auto;padding:10px 12px;border:1px solid #d9ded7;background:#e7ebe5;color:#0d0f0e;font:8px var(--mono);letter-spacing:.06em}
+.mcp-page .mcp-check-button:hover:not(:disabled){background:#cbd2ca}
+.mcp-page .mcp-check-button:disabled{opacity:.55;cursor:not-allowed}
+.mcp-status-disclaimer{margin:0 0 16px;color:#828a83;font-size:9px;line-height:1.55}
 .mcp-transport{flex:0 0 auto;margin-bottom:11px;color:#9ca39d;font:8px var(--mono);letter-spacing:.08em}
 .mcp-command-heading{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:9px}
 .mcp-command-heading>div{display:flex;flex-direction:column;gap:5px}
@@ -326,7 +338,7 @@
  .mcp-steps>article{padding:10px 12px}
  .mcp-tools-list{grid-template-columns:1fr}
 }
-@media(max-width:500px){.mcp-page .mcp-purpose{grid-template-columns:1fr;gap:7px}.mcp-endpoint-row{align-items:stretch;flex-direction:column;gap:8px}.mcp-transport{margin:0}.mcp-command-heading{align-items:flex-start;flex-direction:column}.mcp-page .copy-config{width:100%}.mcp-page .mcp-setup-card{padding:16px 14px}}
+@media(max-width:500px){.mcp-page .mcp-purpose{grid-template-columns:1fr;gap:7px}.mcp-endpoint-row{align-items:stretch;flex-direction:column;gap:8px}.mcp-transport{margin:0}.mcp-status-row{align-items:stretch;flex-direction:column}.mcp-page .mcp-check-button{width:100%}.mcp-command-heading{align-items:flex-start;flex-direction:column}.mcp-page .copy-config{width:100%}.mcp-page .mcp-setup-card{padding:16px 14px}}
 @media(prefers-reduced-motion:reduce){.mcp-hero-orbit *{animation:none!important}}
 
 /* Workspace refresh — StringTune-inspired CSS-first cues and a quiet violet grid. */

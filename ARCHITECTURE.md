@@ -11,7 +11,7 @@
 
 ## Implementation status — 2026-10-04
 
-Implemented packages follow this design: `contracts/MandateVault.sol`, `packages/policy`, `packages/intent-compiler`, `packages/mandate-sdk`, `packages/mcp-server`, and `apps/console`. Evidence includes deterministic TypeScript tests, Foundry invariants, local Anvil + MCP stdio end-to-end checks, and Monad Testnet transfer/deny/revoke/withdraw receipts. Model inference is currently disconnected from the runtime and browser-wallet acceptance remains a separate operational gate.
+Implemented packages follow this design: `contracts/MandateVault.sol`, `packages/policy`, `packages/intent-compiler`, `packages/model-adapter`, `packages/mandate-sdk`, `packages/mcp-server`, and `apps/console`. Evidence includes deterministic TypeScript tests, Foundry invariants, local Anvil + MCP stdio end-to-end checks, Monad Testnet transfer/deny/revoke/withdraw receipts, and Gemini 3.8 Flash local and hosted MCP proposal acceptance. Browser-wallet acceptance remains separate.
 
 ## 1. Executive architecture decision
 
@@ -363,7 +363,7 @@ The local vertical slice is implemented, but release completion requires all of 
 
 - **ERC-8004:** identity adapter after core signer binding works; never a replacement for the contract's authorization checks.
 - **Passkey/P256:** later signer option; EOA/EIP-712 is the smallest testable first path. Monad Track 04 calls out native P256 support, so revisit if the basic vertical slice is complete early.
-- **Model API provider:** not configured in the current runtime. Re-enable inference only after confirming provider endpoint, model ID, authentication/request schema, billing limits, privacy/retention, and regional access. Keep all credentials server-side; deterministic tests remain provider-independent.
+- **Model API provider:** Google's Gemini API serves Gemini 3.8 Flash as `gemini-3.8-flash`. The backend sends the API key in the `x-goog-api-key` header to a fixed HTTPS `generateContent` endpoint and exposes only a schema-validated, review-only MCP proposal. The key remains server-side; deterministic tests do not require a provider call.
 - **General tools/offchain APIs:** later, with a credential-owning gateway and a separate threat model per connector.
 - **Onchain denial events:** not in MVP. Reverted calls have no persistent logs; local denial logs remain local. Do not add a public event method that falsely suggests an arbitrary self-reported denial proves the blocked side effect.
 - **Hosted deployment/indexing:** defer. Use local MCP stdio, public Monad Testnet RPC, and direct event reads for the hackathon proof.
@@ -393,12 +393,20 @@ The four fixed workspace task categories have been removed. The workspace now ac
 
 ### Runtime boundary / not yet production-connected
 
-The repository has a Cloudflare Pages MCP Function but no checked-in Wrangler/Pages bindings config, D1 database binding, Durable Object binding/migration, task API route, validated per-user identity provider, or production policy-store adapter. Accordingly, the new `PolicyStore` is an interface; the test-only store is not persistence. The task reducer is pure and does not persist events or stream them to the workspace. The UI catalog is presently a single in-code entry rather than an API response. The current authenticated MCP route still uses one shared bearer token and the existing MON MCP request path still uses `MandateGateway`/`MandateVault`; the generic gateway does not yet mediate that action. These boundaries must be resolved before treating the generic task flow as deployable or multi-tenant.
+The repository now has a checked-in Wrangler Pages config and a D1 binding for the minimal MCP activity indicator only. It still has no Durable Object/task API route, validated per-user identity provider, or production policy-store adapter. Accordingly, the new `PolicyStore` is an interface; the test-only store is not persistence. The task reducer is pure and does not persist events or stream them to the workspace. The UI catalog is presently a single in-code entry rather than an API response. The current authenticated MCP route still uses one shared bearer token and the existing MON MCP request path still uses `MandateGateway`/`MandateVault`; the generic gateway does not yet mediate that action. These boundaries must be resolved before treating the generic task flow as deployable or multi-tenant.
 
 Do not register an offchain connector until it has a backend-held credential adapter, enforceable typed scopes, durable atomic reservation/idempotency, and connector-specific outcome/reconciliation tests. Monad continues to enforce only its existing fixed-recipient native-MON transfer semantics; a policy hash or generic manifest does not extend onchain enforcement.
 
 ### Next implementation gate
 
-Before adding D1/SQLite Durable Object/Workflow bindings, establish the Pages/Worker compatibility date and local `wrangler pages dev` harness, then add and run migrations against local D1 and test concurrent reservations against a real Durable Object runtime. Configure a validated user identity/JWT audience-and-scope adapter before replacing the shared MCP bearer as the multi-user principal. Only then expose create/propose/clarify/approve/action/status/event-stream routes; approval and revocation remain human/API operations, never model-callable tools.
+Before adding persistent generic task, policy, or reservation stores, establish the Pages/Worker compatibility date and test migrations against local D1; test concurrent reservations against a real Durable Object runtime. Configure a validated user identity/JWT audience-and-scope adapter before replacing the shared MCP bearer as the multi-user principal. Only then expose create/propose/clarify/approve/action/status/event-stream routes; approval and revocation remain human/API operations, never model-callable tools.
 
 Cloudflare design references: [storage selection](https://developers.cloudflare.com/workers/platform/storage-options/), [SQLite Durable Object storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), [D1 database API](https://developers.cloudflare.com/d1/worker-api/d1-database/), and [Workflows guide](https://developers.cloudflare.com/workflows/get-started/guide/).
+
+## MCP client connectivity and deploy gate (2026-10-05)
+
+`/mcp` remains a stateless Streamable HTTP endpoint. It accepts MCP clients that can send the shared bearer credential; the client identity is not inferred or stored. The `MCP_ACTIVITY_DB` D1 table records only an aggregate last-authenticated-request time and count. `/mcp/status` exposes only a boolean for whether a valid bearer request was seen within five minutes; it does not expose client names, prompts, actions, or credentials. Because MCP is request/response, “connected” means recent authenticated activity, not an open socket or saved client configuration.
+
+The console includes a status check and generic endpoint/transport/header instructions alongside a Codex example. Clients requiring OAuth (including ChatGPT web custom MCP connections) need a future OAuth 2.1 authorization server and user-scoped identities; the current shared-token endpoint is not a universal login system and does not provide multi-tenant isolation.
+
+The Pages console `prebuild` runs secret scanning, strict TypeScript, coverage/unit tests, Foundry contract tests, a local Pages + D1 integration test, and production dependency audit before Vite emits deployable assets. GitHub Actions runs that same build for pull requests and pushes to `main`; failures return nonzero so Pages cannot publish assets from a failed build command.

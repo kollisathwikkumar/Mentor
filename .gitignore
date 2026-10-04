@@ -13,3 +13,9 @@ __pycache__/
 .scrapling_cache/
 *.tsbuildinfo
 .DS_Store
+
+# Local browser/deployment/test artifacts
+.playwright-cli/
+.wrangler/
+output/
+artifacts/

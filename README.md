@@ -2,17 +2,19 @@
 
 Mandate is an onchain authorization primitive for bounded agent actions. This workspace contains a Solidity vault, deterministic TypeScript policy/compiler packages, stdio and authenticated Streamable HTTP MCP transports, a viem chain adapter, and a wallet-connected React/Vite console.
 
-The conversational interface is currently a local-only draft surface. No model provider is configured or called. The contract independently rechecks scope, budget, expiry, nonce, and revocation before any native MON transfer.
+The conversational interface is currently a local-only draft surface. The backend has a review-only proposal tool configured for Gemini 3.8 Flash through the Gemini API; model output is validated and never authorizes an action. The contract independently rechecks scope, budget, expiry, nonce, and revocation before any native MON transfer.
 
 ## Implemented
 
 - `contracts/MandateVault.sol`: fixed-recipient native MON escrow, EIP-712 agent signature, monotonic nonce, budget/expiry enforcement, revocation, and post-revocation withdrawal.
 - `packages/policy`: strict MCP request schema, exact decimal-MON-to-wei conversion, pure policy decisions, and stable denial reasons.
-- `packages/intent-compiler`: provider-independent validation and normalization logic retained for a future, explicitly configured provider integration; it is not connected to the chat UI or MCP server.
+- `packages/intent-compiler`: deterministic validation and normalization of untrusted model proposals, with explicit missing-field questions and review-only policy commitment.
+- `packages/model-adapter`: bounded, fixed-host Gemini 3.8 Flash adapter; API key remains backend-only.
 - `packages/mandate-sdk`: Monad Testnet viem reader and EIP-712 signing/submission path.
-- `packages/mcp-server`: shared server factory for stdio and Streamable HTTP transports. It exposes chain status and bounded transfer only when server chain configuration is present; no model proposal tool is registered.
-- `functions/mcp/[[path]].ts`: Cloudflare Pages Function for stateless Streamable HTTP at `/mcp`, bearer authentication, strict origin allowlisting, method validation, and no-store responses.
-- `apps/console`: wallet connect, create/fund/revoke actions, records read from contract state, and a Codex remote-MCP setup guide. The browser bundle contains no MCP bearer or provider/agent key.
+- `packages/mcp-server`: shared server factory for stdio and Streamable HTTP transports. It exposes a review-only proposal when the Gemini key is configured, and chain status/transfer when chain configuration is present.
+- `functions/mcp/[[path]].ts`: Cloudflare Pages Function for stateless Streamable HTTP at `/mcp`, bearer authentication, strict origin allowlisting, method validation, no-store responses, and authenticated-activity recording.
+- `migrations/0001_mcp_activity.sql`: minimal D1 activity ledger used to show whether an authenticated MCP request arrived during the last five minutes. It stores only one timestamp and an aggregate request count—no prompts, tool arguments, token, or client fingerprint.
+- `apps/console`: wallet connect, create/fund/revoke actions, records read from contract state, and an MCP-compatible client setup guide with a live **Check connection** control. The browser bundle contains no MCP bearer or provider/agent key.
 
 ## Local setup
 
@@ -29,20 +31,22 @@ npm run audit:secrets
 npm audit
 ```
 
-Model-provider integration and API-key configuration are paused. The chat UI is local-only and MCP exposes no model proposal tool. A provider can be integrated after its endpoint, model ID, authentication format, and request schema are confirmed.
+The model proposal integration uses `GEMINI_API_KEY` with `GEMINI_MODEL=gemini-3.8-flash`; run `npm run test:gemini-mcp:live` for local stdio acceptance and `npm run test:gemini-mcp:production` for authenticated hosted acceptance. Both now return a schema-validated review proposal. The chat UI remains local-only; the MCP proposal is review-only and does not submit transactions.
 
-### Connect Codex to the remote MCP endpoint
+### Connect an MCP-compatible client
 
-The console's **MCP Connection** page generates a Codex Streamable HTTP command for `https://mandate-console.pages.dev/mcp` (override with public build variable `VITE_MANDATE_MCP_URL`). Production was deployed through Wrangler on 2026-10-04 and the Cloudflare runtime settings are provisioned. To connect Codex on this machine, load only the client bearer from ignored `.env.local` into the shell that starts Codex, then run the generated `codex mcp add` command and verify with `codex mcp list`:
+The console's **MCP Connection** page gives the endpoint and a Codex Streamable HTTP command for `https://mandate-console.pages.dev/mcp` (override with public build variable `VITE_MANDATE_MCP_URL`). The remote endpoint accepts Streamable HTTP clients that can send the configured bearer token; client-specific setup varies. The page's status check reports an authenticated request observed by the server within five minutes. MCP clients are request/response services, so this is recent activity—not proof that a client has merely saved its endpoint. For Codex CLI, load the client bearer from ignored `.env.local` into the shell that starts Codex, then run the generated command and verify with `codex mcp list`:
 
 ```sh
 export MANDATE_MCP_TOKEN="$(sed -n 's/^MANDATE_MCP_TOKEN=//p' /Users/chipichipi/Documents/METROPOLIS/.env.local)"
 codex mcp add mandate-cloud --url 'https://mandate-console.pages.dev/mcp' --bearer-token-env-var MANDATE_MCP_TOKEN
 ```
 
-The bearer value is never embedded in the webpage or generated command. Production MCP calls are bearer-protected; requests without a token return HTTP 401.
+The bearer value is never embedded in the webpage or generated command. Production MCP calls are bearer-protected; requests without a token return HTTP 401. ChatGPT web custom MCP connections require OAuth and are not compatible with this shared-bearer endpoint yet; a ChatGPT integration needs a proper OAuth authorization server and per-user identity rather than pasting this token into the web client.
 
-For a Cloudflare Pages deployment, configure **runtime secrets**, not `VITE_` build variables: `MCP_BEARER_TOKEN` (32+ random bytes), `MANDATE_AGENT_PRIVATE_KEY` (a dedicated testnet signer), `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, and `MANDATE_CONTRACT_ADDRESS`. Set `MCP_ALLOWED_ORIGINS` to the exact trusted browser origins when additional browser clients are used. Never add secrets to GitHub, a Pages build variable, the public Vite bundle, or a copied MCP config. A single shared bearer token is for a controlled testnet MVP; it is not per-user authentication or tenant isolation. Configure Cloudflare rate limiting/monitoring before broader use.
+For a Cloudflare Pages deployment, configure **runtime secrets**, not `VITE_` build variables: `MCP_BEARER_TOKEN` (32+ random bytes), `MANDATE_AGENT_PRIVATE_KEY` (a dedicated testnet signer), `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-3.8-flash`, `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, and `MANDATE_CONTRACT_ADDRESS`. The D1 binding `MCP_ACTIVITY_DB` is defined in `wrangler.jsonc`; apply schema changes with `npx wrangler d1 migrations apply mandate-mcp-activity --remote`. Set `MCP_ALLOWED_ORIGINS` to exact trusted browser origins when additional browser clients are used. Never add secrets to GitHub, a Pages build variable, the public Vite bundle, or a copied MCP config. A single shared bearer token is for a controlled testnet MVP; it is not per-user authentication or tenant isolation. Configure Cloudflare rate limiting/monitoring before broader use.
+
+Every Pages build now runs the release gate first: secret scan, strict TypeScript checks, unit/coverage tests, Foundry contract tests, and production dependency audit. The console build itself follows those checks. `.github/workflows/quality-gates.yml` runs the same build for pull requests and pushes to `main`; Pages Git integration still independently builds each deployment, and the same gates run inside its configured `npm run build --workspace @mandate/console` command.
 
 Run `npm run test:remote-mcp:local` to build the Pages bundle and exercise the actual Pages Function locally with an ephemeral bearer token: unauthenticated denial, rejected origin, allowed preflight, Streamable HTTP initialization, chain-tool discovery, live Monad read, and a revoked-mandate transfer denial. It does not send a transaction.
 
@@ -54,7 +58,7 @@ To open the console without chain configuration:
 npm run dev --workspace @mandate/console
 ```
 
-With the console running locally, `npm run test:browser` uses Scrapling with `--ai-targeted` to smoke-check its rendered title and primary form. `.env.local` contains the testnet contract address and frontend deployment block. For chain MCP tools, configure `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, `MANDATE_CONTRACT_ADDRESS`, and a dedicated test-only `MANDATE_AGENT_PRIVATE_KEY` in ignored `.env.local`. Model-provider configuration is not currently used.
+With the console running locally, `npm run test:browser` uses Scrapling with `--ai-targeted` to smoke-check its rendered title and primary form. `.env.local` contains testnet settings and the backend-only Gemini API key. For chain MCP tools, configure `MONAD_RPC_URL`, `MONAD_CHAIN_ID`, `MANDATE_CONTRACT_ADDRESS`, and a dedicated test-only `MANDATE_AGENT_PRIVATE_KEY` in ignored `.env.local`.
 
 ## Contract test configuration
 
@@ -67,10 +71,11 @@ Foundry is pinned through the project-local `@foundry-rs/forge` and `@foundry-rs
 - [Internal security review](docs/audits/security-review-2026-10-04.md)
 - [Architecture and invariants audit](docs/audits/architecture-audit-2026-10-04.md)
 - [Dependency and secret audit](docs/audits/dependency-audit-2026-10-04.md)
+- [Gemini model integration security review](docs/audits/gemini-model-integration-review.md)
 
 ## Current release state
 
-Local unit tests, Solidity tests, strict TypeScript checks, local MCP/Anvil end-to-end tests, and Monad Testnet transfer/denial/revocation checks pass. The model proposal integration is paused and excluded from the current runtime. See [`docs/testnet-acceptance-2026-10-04.md`](docs/testnet-acceptance-2026-10-04.md). This remains a testnet prototype, not production-ready or third-party audited.
+Local unit tests, Solidity tests, strict TypeScript checks, local MCP/Anvil end-to-end tests, Monad Testnet transfer/denial/revocation checks, and local plus hosted Gemini 3.8 Flash proposal acceptance pass. See [`docs/testnet-acceptance-2026-10-04.md`](docs/testnet-acceptance-2026-10-04.md). This remains a testnet prototype, not production-ready or third-party audited.
 
 ## Generic backend foundation status
 

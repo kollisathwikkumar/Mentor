@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npm run verify:release --prefix ../..",
     "build": "npm run build --workspace @mandate/mcp-server && tsc -b && vite build",
     "preview": "vite preview"
   },

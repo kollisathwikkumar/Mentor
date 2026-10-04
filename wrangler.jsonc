@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mandate-console",
+  "pages_build_output_dir": "./apps/console/dist",
+  "compatibility_date": "2026-10-04",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "global_fetch_strictly_public"
+  ],
+  "d1_databases": [
+    {
+      "binding": "MCP_ACTIVITY_DB",
+      "database_name": "mandate-mcp-activity",
+      "database_id": "8cf5e4d0-6c30-4823-ace4-3c4f9a35abd2",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

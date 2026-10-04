@@ -7,24 +7,23 @@
 | Milestone | Weight | Status | Evidence |
 |---|---:|---|---|
 | Contract, policy engine, deterministic validation, and local test coverage | 25% | Complete | 15 Foundry tests; 43 TypeScript tests; local Anvil allow/deny/revoke end-to-end coverage. |
-| Provider/model proposal integration | 20% | Paused | The provider-specific adapter, runtime configuration, and proposal tool are removed from the active code path. Reconnect after the user supplies the new provider key and endpoint/model details. |
+| Provider/model proposal integration | 20% | Complete | Gemini 3.8 Flash proposal passed through local MCP stdio and deployed Cloudflare Pages MCP. Production returned an exact schema-validated review preview; status read and inactive-transfer denial also passed, with no transaction submitted. |
 | Monad Testnet deployment and code verification | 20% | Complete | Chain ID 10143; contract `0x77065a818481ceebba93e79988bef9fd646f457d`; deployment block `68065182`; 5,910 bytes of bytecode. |
 | Live mandate create/fund and backend MCP status read | 15% | Complete | Mandate `0x36a730095a8f287f71184280d67d91c37cc3dd9bc4eebb3cf90908da8067dd4e`; 0.02 MON deposited; MCP returned active status and nonce 0. |
 | Live bounded transfer and live negative-path/revoke verification | 15% | Complete | MCP submitted a 0.01 MON transfer; receipt/event/balance and mandate state verified. Over-limit and revoked requests were denied; 0.01 MON remainder was withdrawn after revocation. |
 | Browser-wallet/Codex operational acceptance | 5% | In progress | Codex allowlist now includes the transfer tool with prompt approval; restart Codex to load it. Chrome has no EIP-1193 wallet provider, so browser-wallet acceptance remains pending. |
-| **Total** | **100%** | **95% complete** | Remaining weighted work: wallet connection plus active Codex reload/acceptance (5%). |
+| **Total** | **100%** | **95% complete** | Remaining weighted work: browser-wallet connection and active Codex reload/acceptance (5%). |
 
 ## Next acceptance gates
 
-1. Restart Codex and verify the three configured Mandate tools are available with prompt approval.
-2. Connect an EIP-1193 wallet in Chrome on Monad Testnet and verify console read/create/fund/revoke using a separate disposable test mandate.
-3. Before production: add provider spend/call caps, operational telemetry, production key custody/rotation, and a third-party contract audit; deploy and verify a separate production configuration.
+1. Restart Codex and verify the three configured Mandate tools are available with prompt approval; connect an EIP-1193 wallet in Chrome on Monad Testnet and verify console read/create/fund/revoke using a separate disposable test mandate.
+2. Before production: add provider spend/call caps, operational telemetry, production key custody/rotation, and a third-party contract audit; deploy and verify a separate production configuration.
 
 ## Live testnet acceptance run
 
 `npm run test:testnet-flow` passed on 2026-10-04. The runner pins chain ID 10143, the expected contract and mandate, verifies the owner/signer/recipient keys and exact initial state before sending any transaction, and refuses to repeat the non-repeatable flow after state changes.
 
-- MCP currently exposes `get_mandate_status` and `request_bounded_transfer` when chain settings are configured; no model proposal tool is active.
+- MCP exposes `propose_mandate` when the Gemini API key is configured and `get_mandate_status` / `request_bounded_transfer` when chain settings are configured.
 - Bounded transfer: 0.01 MON, receipt success, `TransferExecuted` event nonce 0, recipient delta adjusted for gas exactly 0.01 MON; tx `0xe880a9b30485c516279c45cb1eadc85d01bf1215aedbeedb72b7d7b4de64ae60`.
 - Over-limit request: 0.010000000000000001 MON returned `{ "status": "denied", "reason": "PER_CALL_LIMIT" }`; onchain spent/deposit/nonce unchanged.
 - Principal revocation: success; tx `0x728d4fd010176d88c27658c5a026e4670fa46c79aca1bd335ed03942fca6097d`.

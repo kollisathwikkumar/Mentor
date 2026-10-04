@@ -1,9 +1,11 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { createMandateMcpServer } from '@mandate/mcp-server/server';
+import { readMcpConnectionStatus, recordAuthenticatedMcpRequest, type McpActivityDatabase } from '@mandate/mcp-server/connection-status';
 
-interface RemoteMcpEnvironment extends Readonly<Record<string, string | undefined>> {
+interface RemoteMcpEnvironment {
   readonly MCP_BEARER_TOKEN?: string;
   readonly MCP_ALLOWED_ORIGINS?: string;
+  readonly MCP_ACTIVITY_DB?: McpActivityDatabase;
 }
 
 interface PagesRequestContext {
@@ -51,6 +53,10 @@ function jsonError(status: number, message: string, requestOrigin: string | null
   return withHeaders(new Response(JSON.stringify({ error: message }), { status, headers }), requestOrigin);
 }
 
+function jsonResponse(status: number, body: unknown, requestOrigin: string | null): Response {
+  return withHeaders(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } }), requestOrigin);
+}
+
 export async function onRequest({ request, env }: PagesRequestContext): Promise<Response> {
   const requestOrigin = request.headers.get('Origin');
   const allowed = origins(env);
@@ -70,6 +76,17 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
     return new Response(null, { status: 204, headers });
   }
 
+  const isStatusRequest = new URL(request.url).pathname.split('/').at(-1) === 'status';
+  if (isStatusRequest) {
+    if (request.method !== 'GET') return jsonError(405, 'Method not allowed.', requestOrigin);
+    if (!env.MCP_ACTIVITY_DB) return jsonError(503, 'MCP connection status is not configured.', requestOrigin);
+    try {
+      return jsonResponse(200, await readMcpConnectionStatus(env.MCP_ACTIVITY_DB), requestOrigin);
+    } catch {
+      return jsonError(503, 'MCP connection status is unavailable.', requestOrigin);
+    }
+  }
+
   if (!['GET', 'POST', 'DELETE'].includes(request.method)) {
     return jsonError(405, 'Method not allowed.', requestOrigin);
   }
@@ -81,6 +98,13 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
   const supplied = getBearerToken(request.headers.get('Authorization'));
   if (!supplied || !matchesSecret(supplied, expected)) {
     return jsonError(401, 'A valid bearer token is required.', requestOrigin);
+  }
+
+  if (!env.MCP_ACTIVITY_DB) return jsonError(503, 'MCP connection status is not configured.', requestOrigin);
+  try {
+    await recordAuthenticatedMcpRequest(env.MCP_ACTIVITY_DB);
+  } catch {
+    return jsonError(503, 'MCP request was not accepted because activity could not be recorded.', requestOrigin);
   }
 
   let server: ReturnType<typeof createMandateMcpServer> | undefined;

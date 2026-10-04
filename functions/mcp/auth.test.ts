@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { onRequest } from './[[path]].js';
 
 const testToken = 'mcp-test-token-that-is-long-enough-1234567890';
 const context = (request: Request, env: Readonly<Record<string, string | undefined>> = { MCP_BEARER_TOKEN: testToken }) => ({ request, env });
+
+function activityDatabase(lastSeen = 1_800_000_000_000): { prepare: ReturnType<typeof vi.fn>; run: ReturnType<typeof vi.fn>; first: ReturnType<typeof vi.fn> } {
+  const run = vi.fn(async () => ({ success: true }));
+  const first = vi.fn(async () => ({ last_seen_ms: lastSeen, authenticated_request_count: 1 }));
+  const statement = { bind: vi.fn(() => statement), run, first };
+  return { prepare: vi.fn(() => statement), run, first };
+}
 
 describe('remote Pages MCP endpoint guard', () => {
   it('rejects missing or incorrect bearer tokens before starting MCP', async () => {
@@ -33,5 +40,47 @@ describe('remote Pages MCP endpoint guard', () => {
     const response = await onRequest(context(new Request('https://example.test/mcp', { method: 'PUT' })));
     expect(response.status).toBe(405);
     expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('exposes a read-only status route and fails closed when its database is absent', async () => {
+    const missingDb = await onRequest(context(new Request('https://example.test/mcp/status')));
+    expect(missingDb.status).toBe(503);
+    const database = activityDatabase(Date.now());
+    const response = await onRequest({ request: new Request('https://example.test/mcp/status'), env: { MCP_ACTIVITY_DB: database } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toMatchObject({ connected: true, activeWindowSeconds: 300 });
+    expect(database.run).not.toHaveBeenCalled();
+    const wrongMethod = await onRequest({ request: new Request('https://example.test/mcp/status', { method: 'POST' }), env: { MCP_ACTIVITY_DB: database } });
+    expect(wrongMethod.status).toBe(405);
+    database.first.mockRejectedValue(new Error('database unavailable'));
+    const unavailable = await onRequest({ request: new Request('https://example.test/mcp/status'), env: { MCP_ACTIVITY_DB: database } });
+    expect(unavailable.status).toBe(503);
+  });
+
+  it('records authenticated MCP traffic before serving it and never records rejected traffic', async () => {
+    const database = activityDatabase();
+    const env = { MCP_BEARER_TOKEN: testToken, MCP_ACTIVITY_DB: database };
+    const rejected = await onRequest({ request: new Request('https://example.test/mcp', { method: 'POST' }), env });
+    expect(rejected.status).toBe(401);
+    expect(database.run).not.toHaveBeenCalled();
+    const initialized = await onRequest({ request: new Request('https://example.test/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${testToken}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json', 'Mcp-Protocol-Version': '2025-03-26' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test-client', version: '1.0.0' } } }),
+    }), env });
+    expect(database.run).toHaveBeenCalledOnce();
+    expect(initialized.status).toBe(200);
+  });
+
+  it('does not execute an authenticated MCP request if its activity write fails', async () => {
+    const database = activityDatabase();
+    database.run.mockResolvedValue({ success: false });
+    const response = await onRequest({ request: new Request('https://example.test/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${testToken}`, Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test-client', version: '1.0.0' } } }),
+    }), env: { MCP_BEARER_TOKEN: testToken, MCP_ACTIVITY_DB: database } });
+    expect(response.status).toBe(503);
   });
 });

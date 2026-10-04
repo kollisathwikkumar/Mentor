@@ -18,21 +18,6 @@
     "rootDir": "src",
     "skipLibCheck": true
   },
-  "references": [
-    {
-      "path": "../policy"
-    },
-    {
-      "path": "../mandate-sdk"
-    },
-    {
-      "path": "../intent-compiler"
-    },
-    {
-      "path": "../model-adapter"
-    }
-  ],
-  "include": [
-    "src/**/*.ts"
-  ]
+  "references": [],
+  "include": ["src/**/*.ts"]
 }

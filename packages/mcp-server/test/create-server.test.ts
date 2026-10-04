@@ -29,4 +29,18 @@ describe('MCP server provider configuration', () => {
       await server.close();
     }
   });
+
+  it('adds the review-only proposal tool when the Gemini backend key is configured', async () => {
+    const server = createMandateMcpServer({ GEMINI_API_KEY: 'test-backend-key' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'deepseek-config-test', version: '1.0.0' }, { capabilities: {} });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(['propose_mandate']);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });
