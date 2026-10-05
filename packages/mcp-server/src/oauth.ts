@@ -3,7 +3,7 @@ import { recoverMessageAddress, type Address, type Hex } from 'viem';
 
 export const OAUTH_ISSUER = 'https://mandate-console.pages.dev';
 export const OAUTH_RESOURCE = `${OAUTH_ISSUER}/mcp`;
-export const SUPPORTED_MCP_SCOPES = ['mandate:read', 'mandate:balance', 'mandate:transfer', 'mandate:propose'] as const;
+export const SUPPORTED_MCP_SCOPES = ['mandate:read', 'mandate:balance', 'mandate:transfer', 'mandate:propose', 'mandate:policy'] as const;
 export type McpScope = typeof SUPPORTED_MCP_SCOPES[number];
 type OAuthScope = McpScope | 'offline_access';
 
@@ -260,6 +260,7 @@ function htmlForm(requestUrl: URL, requestId: string, clientName: string, redire
     'mandate:balance': 'Read your native MON balance on Monad Testnet',
     'mandate:transfer': 'Request transfers within a mandate’s onchain limits (MCP client confirmation may be required)',
     'mandate:propose': 'Generate a review-only mandate proposal with the configured model provider',
+    'mandate:policy': 'Create, inspect, approve, or revoke an offchain policy (approval requires a separate wallet signature)',
   };
   const scopeItems = scopes.map((scope) => `<li><label><input type="checkbox" name="granted_scope" value="${scope}"${scope === 'mandate:read' ? ' checked' : ''}> ${htmlEscape(scopeLabels[scope])}</label></li>`).join('');
   const origin = htmlEscape(requestUrl.origin);

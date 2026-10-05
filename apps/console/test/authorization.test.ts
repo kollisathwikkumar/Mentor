@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { validateAuthorizationDraft, type AuthorizationDraft } from '../src/authorization.js';
 
 const validDraft: AuthorizationDraft = {
-  task: 'Pay the approved supplier after invoice review.',
   agent: '0x0000000000000000000000000000000000000002',
   recipient: '0x0000000000000000000000000000000000000003',
   perCallMon: '0.01',
@@ -22,11 +21,8 @@ describe('authorization review validation', () => {
     });
   });
 
-  it('requires a task description before opening the policy review', () => {
-    expect(validateAuthorizationDraft({ ...validDraft, task: '   ' }, 1)).toEqual({
-      ok: false,
-      message: 'Describe the job this agent should handle before defining its access.',
-    });
+  it('validates the standalone transfer permission independently of any workspace chat text', () => {
+    expect(validateAuthorizationDraft(validDraft, 1).ok).toBe(true);
   });
 
   it('rejects malformed agent and recipient identities', () => {

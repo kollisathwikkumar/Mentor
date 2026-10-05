@@ -23,6 +23,7 @@
     "test:balance-mcp:production": "npm run build --workspace @mandate/mcp-server && node scripts/test-production-balance-mcp.mjs",
     "test:remote-mcp:local": "npm run build --workspace @mandate/console && node --env-file=.env.local scripts/test-remote-pages-mcp.mjs",
     "test:mcp-status:local": "node scripts/test-mcp-status-local.mjs",
+    "test:d1-policy:local": "npm run build --workspace @mandate/connectors && node scripts/test-d1-policy-store-local.mjs",
     "test:testnet-flow": "npm run build --workspace @mandate/mcp-server && node --env-file=.env.local scripts/test-testnet-live.mjs",
     "deploy:testnet": "forge build && node --env-file=.env.local scripts/deploy-mandate-testnet.mjs",
     "coverage:contracts": "forge coverage",

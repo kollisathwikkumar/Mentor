@@ -1,7 +1,6 @@
 import { isAddress, parseEther, type Address } from 'viem';
 
 export interface AuthorizationDraft {
-  readonly task: string;
   readonly agent: string;
   readonly recipient: string;
   readonly perCallMon: string;
@@ -14,9 +13,6 @@ export type AuthorizationReview =
   | { readonly ok: false; readonly message: string };
 
 export function validateAuthorizationDraft(draft: AuthorizationDraft, nowUnix: number): AuthorizationReview {
-  if (!draft.task.trim()) {
-    return { ok: false, message: 'Describe the job this agent should handle before defining its access.' };
-  }
   if (!isAddress(draft.agent)) {
     return { ok: false, message: 'Enter a valid agent signer address.' };
   }

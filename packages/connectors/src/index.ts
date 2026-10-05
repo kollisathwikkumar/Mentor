@@ -12,6 +12,7 @@ export interface CapabilityLimits {
 }
 export interface ActionContext {
   readonly principalId: string;
+  readonly agentId: string;
   readonly mandateId: string;
   readonly policyVersion: number;
   readonly idempotencyKey: string;
@@ -127,6 +128,8 @@ export interface CapabilityGrant {
   readonly argumentEquals: Readonly<Record<string, string | number | boolean>>;
   readonly maxCalls: number;
   readonly maxAmount?: number;
+  /** Aggregate budget in the connector's integer minor units. */
+  readonly maxTotalAmount?: number;
   readonly amountField?: string;
 }
 export interface MandatePolicy {
@@ -147,9 +150,13 @@ const capabilityGrantSchema = z.object({
   resourceId: z.string().min(1).max(512),
   argumentEquals: z.record(z.string().min(1).max(64), z.union([z.string().max(512), z.number().finite(), z.boolean()])),
   maxCalls: z.number().int().min(1).max(10_000),
-  maxAmount: z.number().finite().nonnegative().optional(),
+  /** Per-call cap in connector-defined integer minor units (e.g. wei, cents). */
+  maxAmount: z.number().int().safe().nonnegative().optional(),
+  maxTotalAmount: z.number().int().safe().positive().optional(),
   amountField: z.string().min(1).max(64).optional(),
-}).strict().refine((grant) => (grant.maxAmount === undefined) === (grant.amountField === undefined), 'maxAmount and amountField must be provided together');
+}).strict()
+  .refine((grant) => (grant.maxAmount === undefined) === (grant.amountField === undefined), 'maxAmount and amountField must be provided together')
+  .refine((grant) => grant.maxTotalAmount === undefined || grant.amountField !== undefined, 'maxTotalAmount requires amountField');
 
 export const mandatePolicySchema = z.object({
   schemaVersion: z.literal(1),
@@ -162,7 +169,10 @@ export const mandatePolicySchema = z.object({
   policyHash: z.string().regex(/^0x[0-9a-f]{64}$/),
   approvedPolicyHash: z.string().regex(/^0x[0-9a-f]{64}$/).optional(),
   grants: z.array(capabilityGrantSchema).min(1).max(64),
-}).strict();
+}).strict().refine((policy) => {
+  const keys = policy.grants.map((grant) => `${grant.connectorId}:${grant.actionId}`);
+  return new Set(keys).size === keys.length;
+}, 'A mandate may contain only one grant per connector action');
 
 export function canonicalPolicyHash(policy: Omit<MandatePolicy, 'policyHash' | 'approvedPolicyHash' | 'status'>): string {
   const grants = [...policy.grants]
@@ -173,6 +183,7 @@ export function canonicalPolicyHash(policy: Omit<MandatePolicy, 'policyHash' | '
       argumentEquals: Object.fromEntries(Object.entries(grant.argumentEquals).sort(([left], [right]) => left.localeCompare(right))),
       maxCalls: grant.maxCalls,
       ...(grant.maxAmount === undefined ? {} : { maxAmount: grant.maxAmount }),
+      ...(grant.maxTotalAmount === undefined ? {} : { maxTotalAmount: grant.maxTotalAmount }),
       ...(grant.amountField === undefined ? {} : { amountField: grant.amountField }),
     }))
     .sort((left, right) => `${left.connectorId}:${left.actionId}:${left.resourceId}`.localeCompare(`${right.connectorId}:${right.actionId}:${right.resourceId}`));
@@ -193,13 +204,35 @@ export interface PolicySnapshot {
   readonly callsUsed: Readonly<Record<string, number>>;
   readonly idempotency: Readonly<Record<string, ActionOutcome>>;
 }
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonicalize(item)]));
+  }
+  return value;
+}
+
+export function canonicalActionRequestHash(request: ActionRequest): string {
+  return keccak256(stringToHex(JSON.stringify(canonicalize({
+    principalId: request.principalId,
+    agentId: request.agentId,
+    mandateId: request.mandateId,
+    connectorId: request.connectorId,
+    actionId: request.actionId,
+    arguments: request.arguments,
+  }))));
+}
+
 export interface PolicyStore {
   get(mandateId: string): Promise<PolicySnapshot | undefined>;
-  reserve(input: { readonly mandateId: string; readonly principalId: string; readonly expectedVersion: number; readonly now: number; readonly grantKey: string; readonly idempotencyKey: string; readonly maxCalls: number }): Promise<'reserved' | 'duplicate' | 'conflict' | 'limit' | ActionOutcome>;
+  reserve(input: { readonly mandateId: string; readonly principalId: string; readonly agentId: string; readonly expectedVersion: number; readonly now: number; readonly grantKey: string; readonly idempotencyKey: string; readonly requestHash: string; readonly maxCalls: number; readonly amountUnits?: number; readonly maxTotalAmount?: number }): Promise<'reserved' | 'duplicate' | 'conflict' | 'limit' | 'budget' | ActionOutcome>;
   complete(mandateId: string, idempotencyKey: string, outcome: ActionOutcome): Promise<void>;
+  recordDenial?(input: { readonly request: ActionRequest; readonly reason: AuthorizationDenialReason; readonly policyVersion?: number; readonly occurredAt: number }): Promise<void>;
 }
 export interface ActionRequest {
   readonly principalId: string;
+  readonly agentId: string;
   readonly mandateId: string;
   readonly connectorId: string;
   readonly actionId: string;
@@ -208,7 +241,8 @@ export interface ActionRequest {
 }
 export type AuthorizationResult =
   | { readonly status: 'allowed'; readonly outcome: ActionOutcome }
-  | { readonly status: 'denied'; readonly reason: 'INVALID_POLICY' | 'UNKNOWN_CAPABILITY' | 'INVALID_ARGUMENTS' | 'PRINCIPAL_MISMATCH' | 'MANDATE_INACTIVE' | 'MANDATE_EXPIRED' | 'UNAPPROVED_POLICY' | 'NO_GRANT' | 'RESOURCE_MISMATCH' | 'CONSTRAINT_MISMATCH' | 'CALL_LIMIT' | 'INVALID_IDEMPOTENCY_KEY' | 'RESERVATION_CONFLICT' };
+  | { readonly status: 'denied'; readonly reason: 'INVALID_POLICY' | 'UNKNOWN_CAPABILITY' | 'INVALID_ARGUMENTS' | 'PRINCIPAL_MISMATCH' | 'AGENT_MISMATCH' | 'MANDATE_INACTIVE' | 'MANDATE_EXPIRED' | 'UNAPPROVED_POLICY' | 'NO_GRANT' | 'RESOURCE_MISMATCH' | 'CONSTRAINT_MISMATCH' | 'CALL_LIMIT' | 'BUDGET_LIMIT' | 'INVALID_IDEMPOTENCY_KEY' | 'RESERVATION_CONFLICT' };
+export type AuthorizationDenialReason = Extract<AuthorizationResult, { readonly status: 'denied' }>['reason'];
 
 export class AuthorizationGateway {
   readonly #registry: CapabilityRegistry;
@@ -221,53 +255,66 @@ export class AuthorizationGateway {
     this.#now = now;
   }
 
+  async #deny(request: ActionRequest, reason: AuthorizationDenialReason, policyVersion?: number): Promise<AuthorizationResult> {
+    await this.#store.recordDenial?.({ request, reason, ...(policyVersion === undefined ? {} : { policyVersion }), occurredAt: this.#now() });
+    return { status: 'denied', reason };
+  }
+
   async execute(request: ActionRequest): Promise<AuthorizationResult> {
-    if (!/^[a-zA-Z0-9:_-]{16,128}$/.test(request.idempotencyKey)) return { status: 'denied', reason: 'INVALID_IDEMPOTENCY_KEY' };
+    if (!/^[a-zA-Z0-9:_-]{16,128}$/.test(request.idempotencyKey)) return this.#deny(request, 'INVALID_IDEMPOTENCY_KEY');
     const capability = this.#registry.resolve(request.connectorId, request.actionId);
-    if (!capability) return { status: 'denied', reason: 'UNKNOWN_CAPABILITY' };
+    if (!capability) return this.#deny(request, 'UNKNOWN_CAPABILITY');
     let parsed: ActionArguments;
     try { parsed = capability.parseInput(request.arguments); }
-    catch { return { status: 'denied', reason: 'INVALID_ARGUMENTS' }; }
+    catch { return this.#deny(request, 'INVALID_ARGUMENTS'); }
 
     const snapshot = await this.#store.get(request.mandateId);
-    if (!snapshot) return { status: 'denied', reason: 'MANDATE_INACTIVE' };
+    if (!snapshot) return this.#deny(request, 'MANDATE_INACTIVE');
     const checkedPolicy = mandatePolicySchema.safeParse(snapshot.mandate);
-    if (!checkedPolicy.success) return { status: 'denied', reason: 'INVALID_POLICY' };
+    if (!checkedPolicy.success) return this.#deny(request, 'INVALID_POLICY');
     const mandate = checkedPolicy.data;
-    if (mandate.principalId !== request.principalId) return { status: 'denied', reason: 'PRINCIPAL_MISMATCH' };
-    if (mandate.status !== 'active') return { status: 'denied', reason: 'MANDATE_INACTIVE' };
-    if (this.#now() >= mandate.expiresAt) return { status: 'denied', reason: 'MANDATE_EXPIRED' };
+    if (mandate.principalId !== request.principalId) return this.#deny(request, 'PRINCIPAL_MISMATCH', mandate.version);
+    if (mandate.agentId !== request.agentId) return this.#deny(request, 'AGENT_MISMATCH', mandate.version);
+    if (mandate.status !== 'active') return this.#deny(request, 'MANDATE_INACTIVE', mandate.version);
+    if (this.#now() >= mandate.expiresAt) return this.#deny(request, 'MANDATE_EXPIRED', mandate.version);
     const { policyHash, approvedPolicyHash: _approved, status: _status, ...policyBody } = mandate;
     const canonicalHash = canonicalPolicyHash(policyBody);
-    if (policyHash !== canonicalHash || mandate.approvedPolicyHash !== canonicalHash) return { status: 'denied', reason: 'UNAPPROVED_POLICY' };
+    if (policyHash !== canonicalHash || mandate.approvedPolicyHash !== canonicalHash) return this.#deny(request, 'UNAPPROVED_POLICY', mandate.version);
 
     const grant = mandate.grants.find((item) => item.connectorId === request.connectorId && item.actionId === request.actionId);
-    if (!grant) return { status: 'denied', reason: 'NO_GRANT' };
-    if (parsed[capability.resourceField] !== grant.resourceId) return { status: 'denied', reason: 'RESOURCE_MISMATCH' };
+    if (!grant) return this.#deny(request, 'NO_GRANT', mandate.version);
+    if (parsed[capability.resourceField] !== grant.resourceId) return this.#deny(request, 'RESOURCE_MISMATCH', mandate.version);
     for (const [key, expected] of Object.entries(grant.argumentEquals)) {
-      if (!capability.constraints.includes(key)) return { status: 'denied', reason: 'CONSTRAINT_MISMATCH' };
-      if (parsed[key] !== expected) return { status: 'denied', reason: 'CONSTRAINT_MISMATCH' };
+      if (!capability.constraints.includes(key)) return this.#deny(request, 'CONSTRAINT_MISMATCH', mandate.version);
+      if (parsed[key] !== expected) return this.#deny(request, 'CONSTRAINT_MISMATCH', mandate.version);
     }
-    if (grant.amountField && grant.maxAmount !== undefined) {
+    let amountUnits: number | undefined;
+    if (grant.amountField && (grant.maxAmount !== undefined || grant.maxTotalAmount !== undefined)) {
       const amount = parsed[grant.amountField];
       const numericAmount = typeof amount === 'number' ? amount : typeof amount === 'string' ? Number(amount) : Number.NaN;
-      if (!Number.isFinite(numericAmount) || numericAmount < 0 || numericAmount > grant.maxAmount) return { status: 'denied', reason: 'CONSTRAINT_MISMATCH' };
+      if (!Number.isSafeInteger(numericAmount) || numericAmount < 0 || (grant.maxAmount !== undefined && numericAmount > grant.maxAmount)) return this.#deny(request, 'CONSTRAINT_MISMATCH', mandate.version);
+      if (grant.maxTotalAmount !== undefined) {
+        if (!Number.isSafeInteger(numericAmount)) return this.#deny(request, 'CONSTRAINT_MISMATCH', mandate.version);
+        amountUnits = numericAmount;
+      }
     }
     const grantKey = `${grant.connectorId}:${grant.actionId}`;
-    const reservation = await this.#store.reserve({ mandateId: request.mandateId, principalId: request.principalId, expectedVersion: mandate.version, now: this.#now(), grantKey, idempotencyKey: request.idempotencyKey, maxCalls: Math.min(grant.maxCalls, capability.limits.maxCalls) });
+    const reservation = await this.#store.reserve({ mandateId: request.mandateId, principalId: request.principalId, agentId: request.agentId, expectedVersion: mandate.version, now: this.#now(), grantKey, idempotencyKey: request.idempotencyKey, requestHash: canonicalActionRequestHash({ ...request, arguments: parsed }), maxCalls: Math.min(grant.maxCalls, capability.limits.maxCalls), ...(amountUnits === undefined ? {} : { amountUnits }), ...(grant.maxTotalAmount === undefined ? {} : { maxTotalAmount: grant.maxTotalAmount }) });
     if (reservation === 'duplicate') {
       const latest = await this.#store.get(request.mandateId);
       const cached = latest?.idempotency[request.idempotencyKey];
       if (cached) return { status: 'allowed', outcome: cached };
-      return { status: 'denied', reason: 'RESERVATION_CONFLICT' };
+      return this.#deny(request, 'RESERVATION_CONFLICT', mandate.version);
     }
-    if (reservation === 'conflict') return { status: 'denied', reason: 'RESERVATION_CONFLICT' };
-    if (reservation === 'limit') return { status: 'denied', reason: 'CALL_LIMIT' };
+    if (reservation === 'conflict') return this.#deny(request, 'RESERVATION_CONFLICT', mandate.version);
+    if (reservation === 'limit') return this.#deny(request, 'CALL_LIMIT', mandate.version);
+    if (reservation === 'budget') return this.#deny(request, 'BUDGET_LIMIT', mandate.version);
     if (typeof reservation === 'object') return { status: 'allowed', outcome: reservation };
     let outcome: ActionOutcome;
     try {
       outcome = await capability.execute(parsed, {
         principalId: request.principalId,
+        agentId: request.agentId,
         mandateId: request.mandateId,
         policyVersion: mandate.version,
         idempotencyKey: request.idempotencyKey,
@@ -279,6 +326,8 @@ export class AuthorizationGateway {
     return { status: 'allowed', outcome };
   }
 }
+
+export { D1PolicyStore, buildPolicyApprovalMessage } from './d1-policy-store.js';
 
 export type TaskState = 'received' | 'clarification_required' | 'proposal_ready' | 'approval_pending' | 'active' | 'action_allowed' | 'action_denied' | 'execution_started' | 'succeeded' | 'failed' | 'unknown_reconciliation' | 'cancelled' | 'revoked' | 'expired' | 'unsupported';
 export interface TaskRecord {

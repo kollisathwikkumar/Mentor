@@ -1,5 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { createMandateMcpServer } from '@mandate/mcp-server/server';
+import { D1PolicyStore, type D1DatabaseLike } from '@mandate/connectors';
 import { SUPPORTED_MCP_SCOPES, verifyOAuthAccessToken, type OAuthDatabase } from '@mandate/mcp-server/oauth';
 import { readMcpConnectionStatus, recordAuthenticatedMcpRequest, type McpActivityDatabase } from '@mandate/mcp-server/connection-status';
 
@@ -104,6 +105,7 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
   }
   let grantedScopes: readonly string[] = [];
   let principalAddress: string | undefined;
+  let clientId: string | undefined;
   const isMasterBearer = Boolean(expected && expected.length >= 32 && supplied && matchesSecret(supplied, expected));
   if (!isMasterBearer && supplied && env.MCP_ACTIVITY_DB) {
     const resource = `${new URL(request.url).origin}/mcp`;
@@ -111,6 +113,7 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
     if (verified) {
       grantedScopes = verified.scopes;
       principalAddress = verified.principalAddress;
+      clientId = verified.clientId;
     }
     else return jsonError(401, 'A valid bearer token is required.', requestOrigin, request.url);
   } else if (!isMasterBearer) {
@@ -128,7 +131,13 @@ export async function onRequest({ request, env }: PagesRequestContext): Promise<
   try {
     const runtimeEnv: Record<string, string | undefined> = {};
     for (const [key, value] of Object.entries(env)) if (typeof value === 'string') runtimeEnv[key] = value;
-    server = createMandateMcpServer({ ...runtimeEnv, MCP_GRANTED_SCOPES: grantedScopes.join(' '), MCP_PRINCIPAL_ADDRESS: principalAddress });
+    server = createMandateMcpServer({
+      ...runtimeEnv,
+      MCP_GRANTED_SCOPES: grantedScopes.join(' '),
+      MCP_PRINCIPAL_ADDRESS: principalAddress,
+      MCP_CLIENT_ID: clientId,
+      MCP_ALLOW_UNBOUND_PRINCIPAL: isMasterBearer ? 'true' : 'false',
+    }, env.MCP_ACTIVITY_DB ? { policyStore: new D1PolicyStore(env.MCP_ACTIVITY_DB as unknown as D1DatabaseLike) } : {});
     transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

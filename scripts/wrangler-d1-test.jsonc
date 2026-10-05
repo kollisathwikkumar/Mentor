@@ -1,0 +1,13 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "mandate-d1-policy-integration",
+  "main": "./d1-policy-test-worker.ts",
+  "compatibility_date": "2026-10-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [{
+    "binding": "MCP_ACTIVITY_DB",
+    "database_name": "mandate-mcp-activity-test",
+    "database_id": "00000000-0000-0000-0000-000000000004",
+    "migrations_dir": "../migrations"
+  }]
+}

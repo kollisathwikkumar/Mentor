@@ -8,6 +8,7 @@ import { registeredTaskCapabilities } from './capabilities.js';
 import { getSavedMandateIds, rememberMandateId } from './mandate-index.js';
 import { submitConversation, type ConversationTurn } from './conversation.js';
 import { createPasskeyAccount, explainPasskeyError, unlockPasskeyAccount, type PasskeyAccountSession } from './passkey-account.js';
+import { beginWorkspaceOAuth, canCancelWorkspaceTask, cancelWorkspaceTask, clearWorkspaceSession, completeWorkspaceOAuth, createWorkspaceTask, disconnectWorkspaceSession, getWorkspaceTask, listWorkspaceTasks, readLastWorkspaceTaskId, readWorkspaceSession, saveLastWorkspaceTaskId, type WorkspaceSession, type WorkspaceTaskListItem, type WorkspaceTaskRecord } from './workspace-api.js';
 import './style.css';
 interface Provider { request(args: { method: string; params?: readonly string[] }): Promise<readonly string[] | string> }
 declare global { interface Window { ethereum?: Provider; __mandateRoot?: Root } }
@@ -76,6 +77,26 @@ function App(): React.JSX.Element {
   }, [page]);
   function goBack(): void { window.location.hash = previousPage === 'home' ? '#/' : `#/${previousPage}`; }
   const [account, setAccount] = React.useState<Address>();
+  const [workspaceSession, setWorkspaceSession] = React.useState<WorkspaceSession | undefined>(() => {
+    try { return readWorkspaceSession(window.sessionStorage); } catch { return undefined; }
+  });
+  const [trackedTask, setTrackedTask] = React.useState<WorkspaceTaskRecord>();
+  const [workspaceTasks, setWorkspaceTasks] = React.useState<readonly WorkspaceTaskListItem[]>([]);
+  const [taskCursor, setTaskCursor] = React.useState<string | null>(null);
+  const oauthCallbackHandledRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!workspaceSession) { setWorkspaceTasks([]); setTrackedTask(undefined); return; }
+    let active = true;
+    void listWorkspaceTasks(workspaceSession, window.sessionStorage).then((page) => {
+      if (!active) return;
+      setWorkspaceTasks(page.tasks);
+      setTaskCursor(page.nextCursor);
+    }).catch((error: unknown) => { if (active) setNotice(error instanceof Error ? error.message : 'Task history could not be loaded.'); });
+    const taskId = readLastWorkspaceTaskId(window.sessionStorage);
+    if (taskId) void getWorkspaceTask(taskId, workspaceSession, window.sessionStorage).then((record) => { if (active) setTrackedTask(record); })
+      .catch((error: unknown) => { if (active) setNotice(error instanceof Error ? error.message : 'Saved task could not be reloaded.'); });
+    return () => { active = false; };
+  }, [workspaceSession]);
   const [passkeySession, setPasskeySession] = React.useState<PasskeyAccountSession>();
   const passkeySessionRef = React.useRef<PasskeyAccountSession | undefined>(undefined);
   const passkeySessionTimerRef = React.useRef<number | undefined>(undefined);
@@ -83,9 +104,24 @@ function App(): React.JSX.Element {
     if (passkeySessionTimerRef.current !== undefined) window.clearTimeout(passkeySessionTimerRef.current);
     passkeySessionRef.current?.end();
   }, []);
+  React.useEffect(() => {
+    if (oauthCallbackHandledRef.current) return;
+    if (!new URLSearchParams(window.location.search).has('code') && !new URLSearchParams(window.location.search).has('state')) return;
+    oauthCallbackHandledRef.current = true;
+    void completeWorkspaceOAuth({ url: new URL(window.location.href), storage: window.sessionStorage }).then((session) => {
+      if (!session) return;
+      setWorkspaceSession(session);
+      setNotice('Workspace backend connected and account verified. Task notes can now be saved; this does not enable agent execution.');
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
+    }).catch((error: unknown) => {
+      setWorkspaceSession(undefined);
+      clearWorkspaceSession(window.sessionStorage);
+      setNotice(error instanceof Error ? error.message : 'Workspace sign-in did not complete.');
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
+    });
+  }, []);
   const [records, setRecords] = React.useState<readonly RecordView[]>([]);
   const [importId, setImportId] = React.useState('');
-  const [task, setTask] = React.useState('');
   const [composerText, setComposerText] = React.useState('');
   const [conversation, setConversation] = React.useState<readonly ConversationTurn[]>([{ id: 'welcome', role: 'assistant', content: 'Tell me what you want to get done. Include the goal, constraints, or deadline—whatever context matters.' }]);
   const turnNumber = React.useRef(0);
@@ -207,44 +243,114 @@ function App(): React.JSX.Element {
     }
   }
   function continueToPolicy(): void {
-    if (!task.trim()) { setNotice('Describe what you want handled in the conversation first.'); return; }
     setPolicyBuilderOpen(true);
-    setNotice('This reviews the available MON permission only. It does not run the task you described.');
+    setNotice('This opens a standalone Monad transfer permission. It is not bound to or execution of any chat task.');
   }
-  function sendMessage(event: React.FormEvent<HTMLFormElement>): void {
+  async function sendMessage(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const result = submitConversation(conversation, composerText, `turn-${++turnNumber.current}`);
     if (!result.ok) {
       setNotice(result.reason === 'empty' ? 'Write a message before sending.' : 'Keep each message under 2,000 characters.');
       return;
     }
-    setTask(result.task);
     setConversation(result.messages);
     setComposerText('');
     setPolicyBuilderOpen(false);
     setReviewOpen(false);
-    setNotice('Local conversation draft updated. No agent or task API was called.');
+    if (!workspaceSession) {
+      setTrackedTask(undefined);
+      setNotice('Local conversation draft updated. Connect the workspace API to persist a task; no agent was called.');
+      return;
+    }
+    if (account && account.toLowerCase() !== workspaceSession.principal.toLowerCase()) {
+      setNotice('The backend session belongs to a different account. Disconnect it and reconnect with the account you intend to use.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const created = await createWorkspaceTask(result.task, workspaceSession, window.sessionStorage);
+      saveLastWorkspaceTaskId(window.sessionStorage, created.id);
+      const detail = await getWorkspaceTask(created.id, workspaceSession, window.sessionStorage);
+      setTrackedTask(detail);
+      const taskPage = await listWorkspaceTasks(workspaceSession, window.sessionStorage);
+      setWorkspaceTasks(taskPage.tasks); setTaskCursor(taskPage.nextCursor);
+      setConversation((messages) => messages.map((message) => message.id === `turn-${turnNumber.current}-assistant`
+        ? { ...message, content: `Task saved to the Mandate backend (\`${created.id}\`). Current state: ${created.state}. This records and tracks your request; no agent or connector has executed it.` }
+        : message));
+      setNotice(`Task persisted as ${created.state} (version ${created.version}). Execution remains unavailable until a task planner and connector are registered.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Task could not be saved. Your local conversation draft is still available.');
+    } finally { setBusy(false); }
+  }
+  async function connectWorkspaceBackend(): Promise<void> {
+    if (!account) { setNotice('Connect the Mandate passkey or wallet account first; the backend session must match that identity.'); return; }
+    try {
+      const authorizationUrl = await beginWorkspaceOAuth({ origin: window.location.origin, principal: account, storage: window.sessionStorage });
+      window.location.assign(authorizationUrl);
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Workspace backend sign-in could not start.'); }
+  }
+  async function reloadTrackedTask(): Promise<void> {
+    if (!workspaceSession || !trackedTask) return;
+    setBusy(true);
+    try { setTrackedTask(await getWorkspaceTask(trackedTask.task.id, workspaceSession, window.sessionStorage)); setNotice('Task and event history refreshed from the backend.'); }
+    catch (error) { setNotice(error instanceof Error ? error.message : 'Task refresh failed.'); }
+    finally { setBusy(false); }
+  }
+  async function loadMoreWorkspaceTasks(): Promise<void> {
+    if (!workspaceSession || !taskCursor) return;
+    setBusy(true);
+    try {
+      const page = await listWorkspaceTasks(workspaceSession, window.sessionStorage, taskCursor);
+      setWorkspaceTasks((current) => [...current, ...page.tasks.filter((item) => !current.some((existing) => existing.task.id === item.task.id))]);
+      setTaskCursor(page.nextCursor);
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'More task history could not be loaded.'); }
+    finally { setBusy(false); }
+  }
+  async function openWorkspaceTask(taskId: string): Promise<void> {
+    if (!workspaceSession) return;
+    setBusy(true);
+    try { setTrackedTask(await getWorkspaceTask(taskId, workspaceSession, window.sessionStorage)); saveLastWorkspaceTaskId(window.sessionStorage, taskId); }
+    catch (error) { setNotice(error instanceof Error ? error.message : 'Task details could not be loaded.'); }
+    finally { setBusy(false); }
+  }
+  async function cancelTrackedTask(): Promise<void> {
+    if (!workspaceSession || !trackedTask) return;
+    setBusy(true);
+    try {
+      const transition = await cancelWorkspaceTask(trackedTask.task, workspaceSession, window.sessionStorage);
+      if (!transition.ok || transition.record.state !== 'cancelled') throw new Error('Backend did not confirm the task cancellation. Refresh the task and retry.');
+      setTrackedTask(await getWorkspaceTask(trackedTask.task.id, workspaceSession, window.sessionStorage));
+      setNotice('Task cancellation was recorded with a version-checked backend event. No connector action was executed.');
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Task cancellation failed. Refresh and try again.'); }
+    finally { setBusy(false); }
+  }
+  async function disconnectWorkspaceBackend(): Promise<void> {
+    if (!workspaceSession) return;
+    setBusy(true);
+    try {
+      await disconnectWorkspaceSession(workspaceSession, window.sessionStorage);
+      setWorkspaceSession(undefined); setTrackedTask(undefined); setWorkspaceTasks([]); setTaskCursor(null);
+      setNotice('Workspace OAuth access and refresh tokens were revoked; backend task tracking is disconnected.');
+    } catch (error) { setNotice(error instanceof Error ? error.message : 'Backend sign-out could not revoke the current token.'); }
+    finally { setBusy(false); }
   }
   function startNewConversation(): void {
     setConversation([{ id: 'welcome', role: 'assistant', content: 'Tell me what you want to get done. Include the goal, constraints, or deadline—whatever context matters.' }]);
     setComposerText('');
-    setTask('');
     setPolicyBuilderOpen(false);
     setReviewOpen(false);
     setNotice('Started a new local conversation draft.');
   }
   function review(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    if (!task.trim()) { setNotice('Describe the task in the conversation first.'); return; }
-    const validation = validateAuthorizationDraft({ task, agent, recipient, perCallMon: perCall, totalMon: total, expiresAt: expiry }, Math.floor(Date.now() / 1000));
+    const validation = validateAuthorizationDraft({ agent, recipient, perCallMon: perCall, totalMon: total, expiresAt: expiry }, Math.floor(Date.now() / 1000));
     if (!validation.ok) { setNotice(validation.message); return; }
     setReviewOpen(true);
     setNotice('Review the permission carefully. Authorizing it does not send a payment.');
   }
   async function authorize(): Promise<void> {
     if (!account || (!passkeySession && !window.ethereum) || !contractAddress) { setNotice('Continue with a passkey or connect your existing wallet before authorizing. No permission has been created.'); return; }
-    if (!task.trim()) { setNotice('Describe the task in the conversation first.'); setReviewOpen(false); return; }
-    const validation = validateAuthorizationDraft({ task, agent, recipient, perCallMon: perCall, totalMon: total, expiresAt: expiry }, Math.floor(Date.now() / 1000));
+    const validation = validateAuthorizationDraft({ agent, recipient, perCallMon: perCall, totalMon: total, expiresAt: expiry }, Math.floor(Date.now() / 1000));
     if (!validation.ok) { setNotice(validation.message); setReviewOpen(false); return; }
     setBusy(true);
     try {
@@ -288,7 +394,12 @@ function App(): React.JSX.Element {
     <section className="task-panel conversation-panel" aria-labelledby="conversation-title">
       <div className="conversation-heading">
         <div className="conversation-agent"><span className="conversation-mark">M<span>·</span></span><div><p className="kicker">CONVERSATION</p><h2 id="conversation-title">New conversation</h2></div></div>
-        <div className="conversation-heading-actions"><span className="conversation-mode"><i/> LOCAL DRAFT</span><button className="conversation-reset" type="button" onClick={startNewConversation}>New chat <b>＋</b></button></div>
+        <div className="conversation-heading-actions"><span className="conversation-mode"><i/> {workspaceSession ? 'BACKEND TASK LINKED' : 'LOCAL DRAFT'}</span><button className="conversation-reset" type="button" onClick={startNewConversation}>New chat <b>＋</b></button></div>
+      </div>
+      <div className={`workspace-backend-link ${workspaceSession ? 'is-linked' : ''}`}>
+        <div><span className="backend-led"/><div><small>{workspaceSession ? 'PERSISTED BACKEND SESSION' : 'BACKEND TASK STORAGE'}</small><b>{workspaceSession ? `Connected · ${workspaceSession.principal.slice(0, 8)}…${workspaceSession.principal.slice(-6)}` : 'Not connected · conversation stays local'}</b><p>{workspaceSession ? 'Tasks save to the authenticated API. They are tracked as records only; no agent execution is available.' : 'Sign in with the same Mandate account to save task records and retrieve their event history.'}</p></div></div>
+        {workspaceSession ? <button type="button" className="text-button" onClick={() => void disconnectWorkspaceBackend()} disabled={busy}>Revoke connection</button>
+          : <button type="button" className="secondary" onClick={() => void connectWorkspaceBackend()} disabled={busy || !account}>Connect backend</button>}
       </div>
       <div className="conversation-thread" role="log" aria-live="polite" aria-relevant="additions text">
         {conversation.map((message) => <article className={`conversation-message ${message.role}`} key={message.id}>
@@ -302,23 +413,25 @@ function App(): React.JSX.Element {
         <textarea id="conversation-input" value={composerText} onChange={(event) => setComposerText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="Tell Mandate what you want the agent to take care of…" maxLength={2_000} rows={3}/>
         <div className="composer-footer"><span>↵ Send · ⇧↵ New line <i/> {composerText.length}/2,000</span><button className="composer-send" type="submit" disabled={!composerText.trim()}>Send <b>↑</b></button></div>
       </form>
-      <div className="conversation-boundary"><span className="boundary-icon">⌁</span><div><small>AVAILABLE ENFORCEMENT</small><b>{registeredTaskCapabilities[0]?.label ?? 'No registered action'}</b><p>Only this MON transfer policy is enforced onchain. The conversation does not call an agent, and other task types are not executed.</p></div><button type="button" className="boundary-action" onClick={continueToPolicy} disabled={!task.trim()}>Review access <b>↗</b></button></div>
+      <div className="conversation-boundary"><span className="boundary-icon">⌁</span><div><small>AVAILABLE ENFORCEMENT · SEPARATE FROM CHAT</small><b>{registeredTaskCapabilities[0]?.label ?? 'No registered action'}</b><p>This fixed-recipient native MON permission is a standalone onchain policy. It is not derived from or bound to the conversation, and the chat does not execute an agent task.</p></div><button type="button" className="boundary-action" onClick={continueToPolicy}>Configure MON policy <b>↗</b></button></div>
+      {workspaceSession && <section className="task-history" aria-label="Persisted workspace task history"><div className="task-history-head"><div><small>YOUR PERSISTED TASKS</small><b>{workspaceTasks.length} loaded</b></div><button type="button" className="text-button" onClick={() => { setWorkspaceTasks([]); setTaskCursor(null); void listWorkspaceTasks(workspaceSession, window.sessionStorage).then((page) => { setWorkspaceTasks(page.tasks); setTaskCursor(page.nextCursor); }).catch((error: unknown) => setNotice(error instanceof Error ? error.message : 'Task history could not be refreshed.')); }} disabled={busy}>Refresh history</button></div>{workspaceTasks.length === 0 ? <p className="task-history-empty">No persisted tasks found for this account.</p> : <ul>{workspaceTasks.map((item) => <li key={item.task.id}><button type="button" className={trackedTask?.task.id === item.task.id ? 'selected' : ''} onClick={() => void openWorkspaceTask(item.task.id)} disabled={busy}><span><b>{typeof item.data.summary === 'string' ? item.data.summary : 'Task request'}</b><small>{new Date(item.createdAt * 1000).toLocaleString()}</small></span><em>{item.task.state.replaceAll('_', ' ')}</em></button></li>)}</ul>}{taskCursor && <button type="button" className="secondary task-history-more" onClick={() => void loadMoreWorkspaceTasks()} disabled={busy}>{busy ? 'Loading…' : 'Load more tasks'}</button>}</section>}
+      {trackedTask && <section className="tracked-task" aria-label="Persisted backend task"><div className="tracked-task-heading"><div><small>BACKEND TASK · {trackedTask.task.id}</small><h3>{trackedTask.task.state.replaceAll('_', ' ')}</h3><p>Revision {trackedTask.task.version} · {trackedTask.events.length} persisted events · user-owned record</p></div><div className="tracked-task-actions"><button type="button" className="secondary" onClick={() => void reloadTrackedTask()} disabled={busy}>Refresh task</button>{canCancelWorkspaceTask(trackedTask.task.state) && <button type="button" className="text-button" onClick={() => void cancelTrackedTask()} disabled={busy}>Cancel record</button>}</div></div><ol>{trackedTask.events.map((event) => <li key={event.id}><b>{event.to.replaceAll('_', ' ')}</b><span>Revision {event.version} · {new Date(event.occurredAt * 1000).toLocaleString()}</span></li>)}</ol><p className="tracked-task-note">Task tracking is persisted; execution, connector verification, and arbitrary work are not implemented by this interface.</p></section>}
     </section>
     {policyBuilderOpen ? <>
-      <div className="section-title"><div><p className="kicker">STEP 02 · DEFINE THE BOUNDARY</p><h2>Choose what this agent may do</h2></div><small>ACCESS POLICY · NOT A PAYMENT</small></div>
-      <div className="grid"><form className="panel" onSubmit={review}><div className="capability"><span>SUPPORTED CAPABILITY</span><b>Pay one fixed recipient in native MON</b><p>This contract supports that policy only. An agent-side execution connector is not yet enabled.</p></div>
-        <div className="panel-title"><b>01</b><div><h3>Scope the permission</h3><p>Only these fields become enforceable policy.</p></div></div>
+      <div className="section-title"><div><p className="kicker">SEPARATE ONCHAIN CONFIGURATION</p><h2>Configure native MON access</h2></div><small>STANDALONE POLICY · NOT BOUND TO CHAT</small></div>
+      <div className="grid"><form className="panel" onSubmit={review}><div className="capability"><span>SUPPORTED CAPABILITY</span><b>Pay one fixed recipient in native MON</b><p>This standalone contract permission does not authorize the task text in chat. The generic D1 policy approval is a separate API flow; no general task executor or other connector is enabled.</p></div>
+        <div className="panel-title"><b>01</b><div><h3>Scope the permission</h3><p>Only these fields become enforceable onchain policy.</p></div></div>
         <label>Agent identity <span>Signer address</span><input value={agent} onChange={(event) => setAgent(event.target.value)} placeholder="0x…" required autoComplete="off"/></label><label>Allowed destination <span>Fixed address</span><input value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="0x…" required autoComplete="off"/></label>
         <div className="split"><label>Maximum per action <span>MON</span><input value={perCall} onChange={(event) => setPerCall(event.target.value)} inputMode="decimal" placeholder="e.g. 0.01" required/></label><label>Total authority budget <span>MON</span><input value={total} onChange={(event) => setTotal(event.target.value)} inputMode="decimal" placeholder="e.g. 0.02" required/></label></div>
         <label>Permission expires <span>Local timezone</span><input type="datetime-local" value={expiry} onChange={(event) => setExpiry(event.target.value)} required/></label><div className="policy-note">This stage creates an access rule only. It cannot send value to the recipient; funding and agent execution are separate actions.</div><button className="primary" disabled={busy}>Review access policy <b>→</b></button>
-      </form><div className="side"><article className="proof"><div><span className="check">✓</span><small>HOW ACCESS WORKS</small></div><h3>Permission before execution.</h3><p>A wallet registers the rule onchain. Connect your local agent from the dedicated MCP page; this contract currently enforces fixed-recipient MON transfers.</p><ul><li>01 <b>Fixed destination</b></li><li>02 <b>Hard limits</b></li><li>03 <b>Revoke access</b></li></ul></article>
+      </form><div className="side"><article className="proof"><div><span className="check">✓</span><small>HOW ACCESS WORKS</small></div><h3>Permission before execution.</h3><p>This wallet transaction records a standalone Monad policy. MCP status and proposal tools are available separately; scoped OAuth transfer execution also requires an approved D1 mandate, which is not yet linked to this onchain form.</p><ul><li>01 <b>Fixed destination</b></li><li>02 <b>Hard limits</b></li><li>03 <b>Revoke access</b></li></ul></article>
         <details className="funding-details"><summary>Optional · prepare funds for a MON permission</summary><p>Funding is a separate wallet action. Deposited MON stays in escrow until a later authorized agent action or withdrawal after revocation.</p><form className="panel" onSubmit={(event) => void fund(event)}><label>Permission ID<input value={id} onChange={(event) => setId(event.target.value)} placeholder="Created after authorization" required autoComplete="off"/></label><label>Escrow amount <span>MON</span><input value={deposit} onChange={(event) => setDeposit(event.target.value)} inputMode="decimal" placeholder="e.g. 0.02" required/></label><button className="secondary" disabled={busy}>Add escrow funds <b>↗</b></button></form></details></div></div>
     </> : null}
     <section className="records"><div className="section-title"><div><p className="kicker">LIVE ACCESS STATE</p><h2>Agent permissions <sup>{records.length.toString().padStart(2, '0')}</sup></h2></div><button className="refresh" onClick={() => void refresh()} disabled={busy}>↻ &nbsp; Refresh records</button></div>
       <form className="record-import" onSubmit={importMandate}><label htmlFor="permission-import">Have an existing permission ID?</label><input id="permission-import" value={importId} onChange={(event) => setImportId(event.target.value)} placeholder="Paste the 0x… permission ID" autoComplete="off" spellCheck={false}/><button type="submit" disabled={busy}>Load permission</button><small>New permissions are saved automatically in this browser. Use Copy ID to bring one from another device.</small></form>
       {records.length === 0 ? <div className="empty"><div className="monogram">M</div><div><b>No agent permissions found for this account</b><p>Connect the account that created a permission. New to Mandate? Create one above or paste its ID here.</p></div><small>CHAIN VERIFIED · 10143</small></div> : records.map((item) => <article className="record" key={item.id}><div><small>ACCESS ID</small><code title={item.id}>{item.id.slice(0, 10)}…{item.id.slice(-8)}</code><button className="copy-id" type="button" onClick={() => void copyPermissionId(item.id)}>Copy ID</button></div><div><small>FIXED DESTINATION</small><code>{item.recipient.slice(0, 6)}…{item.recipient.slice(-4)}</code></div><div><small>USED / TOTAL AUTHORITY</small><b>{formatEther(item.spent)} <i>/ {formatEther(item.total)} MON</i></b></div><div><small>ESCROW AVAILABLE</small><b>{formatEther(item.deposited)} MON</b></div><div><i className={item.active ? 'active-dot' : 'off-dot'}/>{item.active ? 'Active' : 'Revoked'}</div>{item.active && <button className="revoke" onClick={() => void revoke(item.id)} disabled={busy}>Revoke access</button>}</article>)}
     </section><footer><span>MANDATE · AGENT ACCESS CONTROL</span><span>POLICY IS ENFORCED ON MONAD TESTNET <i>●</i></span></footer>
-    {reviewOpen && <div className="modal-backdrop"><section className="review-sheet" role="dialog" aria-modal="true" aria-labelledby="review-title"><p className="kicker">STEP 03 · HUMAN REVIEW</p><h2 id="review-title">Review agent access</h2><p className="review-intro">Review the independent onchain permission. This does not execute the task from your conversation.</p><dl className="review-grid"><div><dt>Task</dt><dd>{task}</dd></div><div><dt>Available permission</dt><dd>{registeredTaskCapabilities[0]?.label ?? 'No registered action'} · not connected to this task execution</dd></div><div><dt>Agent signer</dt><dd>{agent}</dd></div><div><dt>Fixed destination</dt><dd>{recipient}</dd></div><div><dt>Per-action maximum</dt><dd>{perCall} MON</dd></div><div><dt>Total authority</dt><dd>{total} MON</dd></div><div><dt>Expires</dt><dd>{new Date(expiry).toLocaleString()}</dd></div></dl><div className="review-note"><b>No payment happens here.</b> Wallet confirmation records this access policy on Monad. Escrow funding and any later agent action are separate.</div><div className="review-actions"><button className="secondary" type="button" onClick={() => setReviewOpen(false)}>Edit policy</button>{!account && <button className="secondary" type="button" onClick={() => void connect()}>Connect wallet</button>}<button className="primary" type="button" onClick={() => void authorize()} disabled={!account || busy}>{busy ? 'Waiting for wallet…' : 'Authorize agent access'} <b>↗</b></button></div></section></div>}
+    {reviewOpen && <div className="modal-backdrop"><section className="review-sheet" role="dialog" aria-modal="true" aria-labelledby="review-title"><p className="kicker">HUMAN REVIEW · MONAD TESTNET</p><h2 id="review-title">Review standalone MON access</h2><p className="review-intro">This onchain permission is independent from your workspace chat and does not execute a task.</p><dl className="review-grid"><div><dt>Policy relationship</dt><dd>Standalone · not bound to any task</dd></div><div><dt>Available permission</dt><dd>{registeredTaskCapabilities[0]?.label ?? 'No registered action'}</dd></div><div><dt>Agent signer</dt><dd>{agent}</dd></div><div><dt>Fixed destination</dt><dd>{recipient}</dd></div><div><dt>Per-action maximum</dt><dd>{perCall} MON</dd></div><div><dt>Total authority</dt><dd>{total} MON</dd></div><div><dt>Expires</dt><dd>{new Date(expiry).toLocaleString()}</dd></div></dl><div className="review-note"><b>No payment happens here.</b> Wallet confirmation records this access policy on Monad. Escrow funding and any later agent action are separate.</div><div className="review-actions"><button className="secondary" type="button" onClick={() => setReviewOpen(false)}>Edit policy</button>{!account && <button className="secondary" type="button" onClick={() => void connect()}>Connect wallet</button>}<button className="primary" type="button" onClick={() => void authorize()} disabled={!account || busy}>{busy ? 'Waiting for wallet…' : 'Authorize MON access'} <b>↗</b></button></div></section></div>}
   </main></div>
     <section className="standalone-page mcp-page" aria-labelledby="connections-title">
       <div className="page-breadcrumb"><div className="breadcrumb-labels"><a href="#/space">SPACE</a><span>/</span><span>MCP CONNECTION</span></div><div className="page-route-actions"><button type="button" onClick={goBack}>← Back</button><a href="#/">Home</a></div></div>
@@ -330,7 +443,7 @@ function App(): React.JSX.Element {
           <label htmlFor="mcp-endpoint">HOSTED MCP URL<input id="mcp-endpoint" value={mcpEndpoint} readOnly aria-label="Hosted Mandate MCP URL"/></label>
           <button type="button" className="copy-config mcp-url-copy" onClick={() => { void navigator.clipboard.writeText(mcpEndpoint).then(() => { setMcpCopied(true); setNotice('Mandate MCP URL copied. Add it as a remote Streamable HTTP server in your AI client.'); }).catch(() => setNotice('Clipboard access was blocked. Select and copy the URL manually.')); }}>{mcpCopied ? 'COPIED ✓' : 'COPY URL'}</button>
         </div>
-        <p className="mcp-explanation">Add a <b>remote MCP server</b> and paste this URL. At sign-in, use your Mandate passkey—your device verifies you and picks the account automatically. No address, API key, or browser extension to find. Passkeys require WebAuthn PRF support; if your authenticator does not support it, use an existing EVM wallet instead. Sign-in is a free message signature, not a transaction. Read mandate status by ID. If a client requests it, sharing your public MON balance is a separate optional permission. Proposals are review-only; transfer access is optional.</p>
+        <p className="mcp-explanation">Add a <b>remote MCP server</b> and paste this URL. At sign-in, use your Mandate passkey—your device verifies you and picks the account automatically. No address, API key, or browser extension to find. Passkeys require WebAuthn PRF support; if your authenticator does not support it, use an existing EVM wallet instead. Sign-in is a free message signature, not a transaction. Read mandate status by ID. If a client requests it, sharing your public MON balance is a separate optional permission. Proposals are review-only. A scoped transfer requires both a matching approved D1 policy and the onchain Monad mandate; this console does not yet link its standalone onchain form to the D1 policy flow.</p>
         <div className="mcp-status-row"><div className="mcp-status-copy" aria-live="polite"><span className={mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'mcp-status-dot is-connected' : 'mcp-status-dot is-ready') : 'mcp-status-dot') : 'mcp-status-dot is-unknown'}/><div><strong>{mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'CONNECTED · RECENT AUTHENTICATED REQUEST' : 'SERVICE ONLINE · WAITING FOR CLIENT') : 'SERVICE NEEDS CONFIGURATION') : 'SERVICE STATUS NOT CHECKED'}</strong><small>{mcpStatus ? (mcpStatus.ready ? (mcpStatus.connected ? 'A client authenticated within the last five minutes.' : 'The hosted endpoint is ready. Register it in your client and complete its handshake.') : 'The hosted authorization service is not ready. Try again later.') : 'Checks endpoint readiness. A client handshake is needed to show recent activity.'}</small></div></div><button type="button" className="mcp-check-button" onClick={() => void checkMcpConnection()} disabled={mcpStatusBusy}>{mcpStatusBusy ? 'CHECKING…' : 'CHECK SERVICE'}</button></div>
         <p className="mcp-status-disclaimer">The same OAuth connection works across clients that support remote MCP authentication. Access is tied to your Mandate account; read and transfer requests are limited to mandates owned by that account. Proposals are review-only; a proposal does not change a policy or send a transaction. The AI client may ask separately before a transfer request.</p>
       </div>

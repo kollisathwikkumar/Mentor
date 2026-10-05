@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { CapabilityRegistry, canonicalPolicyHash, defineCapability, mandatePolicySchema, type ConnectorAdapter } from '../src/index.js';
+import { CapabilityRegistry, canonicalActionRequestHash, canonicalPolicyHash, defineCapability, mandatePolicySchema, type ConnectorAdapter } from '../src/index.js';
 
 const inputSchema = z.object({ resourceId: z.string().min(1), value: z.string().min(1) }).strict();
 const adapter: ConnectorAdapter<typeof inputSchema> = {
@@ -32,6 +32,16 @@ describe('strict mandate policy schema', () => {
     const valid = policy().mandate;
     expect(mandatePolicySchema.safeParse({ ...valid, hiddenApproval: true }).success).toBe(false);
     expect(mandatePolicySchema.safeParse({ ...valid, grants: [{ ...valid.grants[0], maxAmount: 1 }] }).success).toBe(false);
+    expect(mandatePolicySchema.safeParse({ ...valid, grants: [{ ...valid.grants[0], maxAmount: 1.25, amountField: 'amount' }] }).success).toBe(false);
+    expect(mandatePolicySchema.safeParse({ ...valid, grants: [valid.grants[0], valid.grants[0]] }).success).toBe(false);
+  });
+});
+
+describe('canonical action request digest', () => {
+  it('sorts argument keys and binds changed arguments, principal, target, and action', () => {
+    const request = { principalId: 'p', agentId: 'agent', mandateId: 'm', connectorId: 'c', actionId: 'a', arguments: { b: 2, a: 1 }, idempotencyKey: 'idem-key-00000001' };
+    expect(canonicalActionRequestHash(request)).toBe(canonicalActionRequestHash({ ...request, arguments: { a: 1, b: 2 } }));
+    expect(canonicalActionRequestHash(request)).not.toBe(canonicalActionRequestHash({ ...request, arguments: { ...request.arguments, b: 3 } }));
   });
 });
 
@@ -61,20 +71,26 @@ class MemoryPolicyStore implements PolicyStore {
   readonly snapshot: PolicySnapshot;
   readonly #used = new Map<string, number>();
   readonly #results = new Map<string, ActionOutcome>();
+  readonly #requests = new Map<string, string>();
+  readonly #amounts = new Map<string, number>();
   constructor(snapshot: PolicySnapshot) { this.snapshot = snapshot; }
   async get(mandateId: string): Promise<PolicySnapshot | undefined> {
     if (mandateId !== this.snapshot.mandate.id) return undefined;
     return { ...this.snapshot, callsUsed: Object.fromEntries(this.#used), idempotency: Object.fromEntries(this.#results) };
   }
-  async reserve(input: { readonly mandateId: string; readonly principalId: string; readonly expectedVersion: number; readonly now: number; readonly grantKey: string; readonly idempotencyKey: string; readonly maxCalls: number }): Promise<'reserved' | 'duplicate' | 'conflict' | 'limit' | ActionOutcome> {
-    const { mandateId, principalId, expectedVersion, now, grantKey, idempotencyKey, maxCalls } = input;
-    if (mandateId !== this.snapshot.mandate.id || expectedVersion !== this.snapshot.mandate.version || principalId !== this.snapshot.mandate.principalId || this.snapshot.mandate.status !== 'active' || now >= this.snapshot.mandate.expiresAt) return 'conflict';
-    if (this.#results.has(idempotencyKey)) return this.#results.get(idempotencyKey) ?? 'duplicate';
+  async reserve(input: Parameters<PolicyStore['reserve']>[0]): ReturnType<PolicyStore['reserve']> {
+    const { mandateId, principalId, agentId, expectedVersion, now, grantKey, idempotencyKey, maxCalls, requestHash, amountUnits, maxTotalAmount } = input;
+    if (mandateId !== this.snapshot.mandate.id || expectedVersion !== this.snapshot.mandate.version || principalId !== this.snapshot.mandate.principalId || agentId !== this.snapshot.mandate.agentId || this.snapshot.mandate.status !== 'active' || now >= this.snapshot.mandate.expiresAt) return 'conflict';
+    if (this.#requests.has(idempotencyKey)) return this.#requests.get(idempotencyKey) === requestHash ? this.#results.get(idempotencyKey) ?? 'duplicate' : 'conflict';
     const used = this.#used.get(grantKey) ?? 0;
     const grant = this.snapshot.mandate.grants.find((item) => `${item.connectorId}:${item.actionId}` === grantKey);
     if (!grant) return 'conflict';
     if (used >= Math.min(grant.maxCalls, maxCalls)) return 'limit';
+    const amountUsed = this.#amounts.get(grantKey) ?? 0;
+    if (maxTotalAmount !== undefined && amountUnits !== undefined && amountUsed + amountUnits > maxTotalAmount) return 'budget';
     this.#used.set(grantKey, used + 1);
+    if (amountUnits !== undefined) this.#amounts.set(grantKey, amountUsed + amountUnits);
+    this.#requests.set(idempotencyKey, requestHash);
     return 'reserved';
   }
   async complete(_mandateId: string, idempotencyKey: string, outcome: ActionOutcome): Promise<void> { this.#results.set(idempotencyKey, outcome); }
@@ -93,7 +109,7 @@ const policy = (patch: Partial<PolicySnapshot['mandate']> = {}): PolicySnapshot 
   };
 };
 const action = (patch: Partial<Parameters<AuthorizationGateway['execute']>[0]> = {}) => ({
-  principalId: 'user-1', mandateId: 'm-1', connectorId: 'test.records', actionId: 'records.update',
+  principalId: 'user-1', agentId: 'agent-1', mandateId: 'm-1', connectorId: 'test.records', actionId: 'records.update',
   arguments: { resourceId: 'r-1', value: 'ok' }, idempotencyKey: 'idem-key-00000001', ...patch,
 });
 
@@ -140,6 +156,17 @@ describe('authorization gateway', () => {
     expect(await new AuthorizationGateway(new CapabilityRegistry([capability]), new MemoryPolicyStore(missingAmountPolicy), () => 1_000).execute(action())).toMatchObject({ status: 'denied', reason: 'CONSTRAINT_MISMATCH' });
   });
 
+  it('enforces an aggregate amount budget across otherwise individually allowed calls', async () => {
+    const amountSchema = z.object({ resourceId: z.string(), amount: z.union([z.string(), z.number()]) }).strict();
+    let calls = 0;
+    const amountCapability = defineCapability({ ...capability, inputSchema: amountSchema, adapter: { execute: async () => { calls += 1; return { status: 'ok' }; } } });
+    const snapshot = policy({ grants: [{ connectorId: 'test.records', actionId: 'records.update', resourceId: 'r-1', argumentEquals: {}, maxCalls: 10, amountField: 'amount', maxAmount: 5, maxTotalAmount: 5 }] });
+    const gateway = new AuthorizationGateway(new CapabilityRegistry([amountCapability]), new MemoryPolicyStore(snapshot), () => 1_000);
+    expect(await gateway.execute(action({ arguments: { resourceId: 'r-1', amount: 4 } }))).toMatchObject({ status: 'allowed' });
+    expect(await gateway.execute(action({ arguments: { resourceId: 'r-1', amount: 2 }, idempotencyKey: 'idem-key-00000002' }))).toMatchObject({ status: 'denied', reason: 'BUDGET_LIMIT' });
+    expect(calls).toBe(1);
+  });
+
   it('rejects malformed policy state from the store', async () => {
     const store: PolicyStore = { get: async () => ({ ...policy(), mandate: { ...policy().mandate, grants: [] } }), reserve: async () => 'conflict', complete: async () => undefined };
     expect(await new AuthorizationGateway(new CapabilityRegistry([capability]), store, () => 1_000).execute(action())).toMatchObject({ status: 'denied', reason: 'INVALID_POLICY' });
@@ -163,6 +190,7 @@ describe('authorization gateway', () => {
     const nowRun = async (snapshot: PolicySnapshot, request = action()) => new AuthorizationGateway(new CapabilityRegistry([capability]), new MemoryPolicyStore(snapshot), () => 1_000).execute(request);
     expect(await nowRun(policy({ approvedPolicyHash: `0x${'0'.repeat(64)}` }))).toMatchObject({ status: 'denied', reason: 'UNAPPROVED_POLICY' });
     expect(await nowRun(policy({ approvedPolicyHash: `0x${'1'.repeat(64)}` }))).toMatchObject({ status: 'denied', reason: 'UNAPPROVED_POLICY' });
+    expect(await nowRun(policy(), action({ agentId: 'different-agent-2' }))).toMatchObject({ status: 'denied', reason: 'AGENT_MISMATCH' });
     expect(await nowRun(policy({ status: 'revoked' }))).toMatchObject({ status: 'denied', reason: 'MANDATE_INACTIVE' });
     expect(await nowRun(policy({ grants: [{ connectorId: 'test.records', actionId: 'records.read', resourceId: 'r-1', argumentEquals: {}, maxCalls: 1 }] }))).toMatchObject({ status: 'denied', reason: 'NO_GRANT' });
     expect(await nowRun(policy(), action({ arguments: { resourceId: 'r-2', value: 'ok' } }))).toMatchObject({ status: 'denied', reason: 'RESOURCE_MISMATCH' });
