@@ -93,6 +93,11 @@ try {
   const authorizeResponse = await fetch(authorizeUrl);
   assert.equal(authorizeResponse.status, 200);
   const authorizeHtml = await authorizeResponse.text();
+  const approvalFormStart = authorizeHtml.indexOf('<form id="wallet-approval"');
+  const approvalFormEnd = authorizeHtml.indexOf('</form>', approvalFormStart);
+  const checkedReadScope = authorizeHtml.indexOf('name="granted_scope" value="mandate:read" checked');
+  assert.ok(approvalFormStart >= 0 && checkedReadScope > approvalFormStart && checkedReadScope < approvalFormEnd,
+    'The checked OAuth permission must be inside the approval form so the consent buttons can submit it.');
   const passkeyBundleResponse = await fetch(`${baseUrl}/assets/oauth-approve.js`);
   assert.equal(passkeyBundleResponse.status, 200, 'OAuth consent must load its same-origin passkey/wallet bundle.');
   assert.match(passkeyBundleResponse.headers.get('content-type') ?? '', /javascript/);

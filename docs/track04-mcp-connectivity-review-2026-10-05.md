@@ -21,6 +21,12 @@ AI clients otherwise need broad credentials or manual approval for every operati
 3. **Least-privilege OAuth consent.** Consent lists only scopes requested by the client; mandate status is checked when requested, and balance/proposal/transfer require explicit opt-in. The backend validates submitted scopes against the original request before issuing a code and preserves the requested refresh scope. At least one tool capability is required.
 4. **Clearer product positioning.** The MCP URL is the only connection value users copy. Site and README text explains account identity, device passkey verification, non-transaction sign-in, scope controls, and authenticators with WebAuthn PRF. Track 04 notes now distinguish shipped/tested capability from unvalidated roadmap.
 
+## OAuth consent-button incident — 5 October 2026
+
+The user-reported “buttons do nothing” failure was reproduced in the live Claude authorization flow. After a click, the consent page displayed “Select at least one capability” even though `mandate:read` was visibly selected. The checked permission inputs had been rendered outside `#wallet-approval`, while every sign-in handler searched for selected permissions inside that form. Therefore all three buttons returned before opening the passkey or wallet flow. The fix moves the scope controls into the form and adds a regression assertion that the preselected read scope is a descendant of that form. This fixes the silent early exit; it does not complete identity proof or create a user account by itself.
+
+The repair is complete in source and its local MCP/OAuth acceptance suite passes. The hosted page must be redeployed and the Claude OAuth flow restarted before the fix can be counted as live. The user's account/passkey approval remains a separate identity action.
+
 ## Security and compatibility review
 
 - OAuth still uses PKCE, one-time short-lived nonce-bound EIP-191 signatures, origin/audience checks, hashed tokens, and scope validation. The consent page serves a same-origin compiled module under `script-src 'self'`; no inline executable script was added.

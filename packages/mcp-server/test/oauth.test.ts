@@ -35,6 +35,12 @@ describe('OAuth account sign-in instructions', () => {
     );
 
     const page = await response.text();
+    const approvalFormStart = page.indexOf('<form id="wallet-approval"');
+    const approvalFormEnd = page.indexOf('</form>', approvalFormStart);
+    const checkedReadScope = page.indexOf('name="granted_scope" value="mandate:read" checked');
+    expect(approvalFormStart).toBeGreaterThanOrEqual(0);
+    expect(checkedReadScope).toBeGreaterThan(approvalFormStart);
+    expect(checkedReadScope).toBeLessThan(approvalFormEnd);
     expect(page).toContain('Create a passkey');
     expect(page).toContain('Continue with my passkey');
     expect(page).toContain('Use an existing wallet instead');
