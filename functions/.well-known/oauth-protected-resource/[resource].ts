@@ -1,3 +1,5 @@
+import { SUPPORTED_MCP_SCOPES } from '@mandate/mcp-server/oauth';
+
 interface ResourceMetadataContext {
   readonly request: Request;
   readonly params: { readonly resource: string };
@@ -10,7 +12,7 @@ export function onRequest({ request, params }: ResourceMetadataContext): Respons
     resource: `${issuer}/mcp`,
     authorization_servers: [issuer],
     bearer_methods_supported: ['header'],
-    scopes_supported: ['mandate:read', 'mandate:transfer', 'mandate:propose'],
+    scopes_supported: [...SUPPORTED_MCP_SCOPES],
     resource_name: 'Mandate MCP',
   }), {
     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=300', 'X-Content-Type-Options': 'nosniff' },
