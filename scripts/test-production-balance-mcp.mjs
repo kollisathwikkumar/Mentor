@@ -46,7 +46,7 @@ try {
   assert.equal(pageResponse.status, 200, 'Hosted OAuth authorization page must load.');
   const page = await pageResponse.text();
   assert.match(page, /Read your native MON balance on Monad Testnet/);
-  assert.match(page, /balance, proposal, and transfer stay off unless you select them/);
+  assert.match(page, /Only permissions requested by this client appear here/);
   const field = (name) => page.match(new RegExp(`name="${name}" value="([A-Za-z0-9_-]+)"`))?.[1];
   const requestId = field('request_id');
   const walletNonce = field('wallet_nonce');

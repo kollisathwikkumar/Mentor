@@ -50,6 +50,6 @@ describe('OAuth account sign-in instructions', () => {
     expect(page).toMatch(/name="granted_scope" value="mandate:balance">/);
     expect(page).toMatch(/name="granted_scope" value="mandate:propose">/);
     expect(page).toMatch(/name="granted_scope" value="mandate:transfer">/);
-    expect(page).toContain('balance, proposal, and transfer stay off unless you select them');
+    expect(page).toContain('Only permissions requested by this client appear here. Choose at least one. Mandate status is checked when requested; balance, proposal, and transfer always need your explicit selection.');
   });
 });

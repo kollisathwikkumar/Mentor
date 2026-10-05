@@ -13,6 +13,6 @@ fi
 grep -q 'Permission for agents' "$output"
 grep -q 'Agent permissions' "$output"
 grep -q 'Have an existing permission ID' "$output"
-grep -q 'separately choose whether to share your account' "$output"
+grep -q 'If a client requests it, sharing your public MON balance is a separate optional permission' "$output"
 python3 -c "from pathlib import Path; Path('$output').unlink(missing_ok=True)"
 printf 'Scrapling smoke passed: console title and mandate form are present.\n'

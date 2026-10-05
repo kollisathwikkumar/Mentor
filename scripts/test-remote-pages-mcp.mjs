@@ -104,7 +104,7 @@ try {
   assert.match(authorizeHtml, /Passkeys need an authenticator with WebAuthn PRF support/);
   assert.match(authorizeHtml, /Mandate workspace/);
   assert.match(authorizeHtml, /Read your native MON balance on Monad Testnet/);
-  assert.match(authorizeHtml, /balance, proposal, and transfer stay off unless you select them/);
+  assert.match(authorizeHtml, /Only permissions requested by this client appear here/);
   assert.doesNotMatch(authorizeHtml, /Mandate access token/);
   const field = (name) => authorizeHtml.match(new RegExp(`name="${name}" value="([^"]+)"`))?.[1];
   const walletNonce = field('wallet_nonce');
