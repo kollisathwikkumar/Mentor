@@ -77,7 +77,7 @@ The follow-on `mandate:balance` capability is separately consented and tool-isol
 
 The follow-on implementation adds `mandate:balance`, a consent-off-by-default, read-only scope that registers only `get_my_monad_balance`. The server derives its sole address from the signed OAuth principal; the tool accepts no address argument, does not load a transfer signer, and makes no transaction. The frontend saves new mandate IDs locally, verifies every imported ID's current onchain principal before display, provides Copy ID/import for cross-device recovery, and limits automatic event discovery to 100 recent blocks.
 
-The 100-block constraint is from a live call to the configured Monad RPC: `eth_getLogs is limited to a 100 range`. Full historical event discovery is not solved without a maintained indexer/API; the application now handles the public endpoint's limit transparently and lets owners load a known ID instead of presenting a failed search as a chain outage. This source change still needs a Pages deployment and hosted OAuth test before the new scope is counted as live.
+The 100-block constraint is from a live call to the configured Monad RPC: `eth_getLogs is limited to a 100 range`. Full historical event discovery is not solved without a maintained indexer/API; the application now handles the public endpoint's limit transparently and lets owners load a known ID instead of presenting a failed search as a chain outage.
 
 Source checks run on this follow-on working tree:
 
@@ -85,6 +85,18 @@ Source checks run on this follow-on working tree:
 |---|---|
 | `npm run test:remote-mcp:local` | PASS — release prebuild, 19 test files / 101 tests, 15 Solidity tests, secret scan, type checks, local D1/MCP/OAuth scope checks, dependency audit, production build, and Pages Function MCP handshake all passed; exit 0. |
 | `npm run test:browser -- http://127.0.0.1:5173/#/workspace` | PASS — Scrapling 0.4.15 with `--ai-targeted` fetched the workspace and checked record import, MCP explanation, title, and primary form; exit 0. |
+
+The revision was pushed to `main` as `18ecf9f` and deployed to Cloudflare Pages (`https://44d19696.mandate-console.pages.dev`; Git-connected production build `6c3de317`). Follow-up hosted checks on the canonical URL:
+
+| Check | Result |
+|---|---|
+| Production OAuth authorization | PASS — dynamic client registration, balance-only consent page, signed test identity, nonce validation, redirect/state, and PKCE exchange succeeded. |
+| Production Streamable HTTP MCP | PASS — balance-only token discovered exactly `get_my_monad_balance`; the tool returned the matching test principal and a valid MON balance from live Monad RPC. No transfer or transaction was requested. The test revoked its access and refresh tokens; named DCR test-client rows are retained by the script. |
+| Unauthenticated hosted MCP | PASS — `POST /mcp` initialize returned HTTP 401 with `A valid bearer token is required.` |
+| Hosted UI via Scrapling | PASS — canonical `/#/workspace` returned HTTP 200 with the permission-ID import and MCP guidance; `/mcp/status` returned HTTP 200 with `ready: true`. Recent test traffic made `connected: true` during the five-minute activity window. |
+| Visible Chrome page | PASS — the hosted workspace rendered passkey-first account actions and permission-ID import. No user passkey ceremony or onchain signature was performed. |
+
+The successful hosted MCP test used a deterministic disposable test identity. It proves the hosted OAuth/MCP/RPC implementation path, not a signed-in Claude or Kimi client integration. Those client-specific tests remain partial/pending, and the testnet's 100-block event-history cap still prevents automatic full-history discovery.
 
 ### Deployment notes and client limitations
 
