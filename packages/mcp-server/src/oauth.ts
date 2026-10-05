@@ -130,11 +130,11 @@ function oauthError(error: string, status = 400, description?: string): Response
   return json({ error, ...(description ? { error_description: description } : {}) }, status);
 }
 
-function html(title: string, content: string, status = 200): Response {
+function html(title: string, content: string, status = 200, formActionOrigin?: string): Response {
   const doc = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlEscape(title)}</title><style>body{margin:0;background:#090b0a;color:#e7ebe5;font:16px system-ui,sans-serif}.wrap{max-width:560px;margin:8vh auto;padding:28px;border:1px solid #363d38;background:#111412}h1{font-size:23px}p,li{color:#b3bab4;line-height:1.55}button{margin:8px 8px 8px 0;padding:12px 18px;border:0;background:#d4ff72;color:#10120e;font-weight:700;cursor:pointer}.muted{font-size:13px;color:#949b94}code{overflow-wrap:anywhere}</style><main class="wrap"><h1>${htmlEscape(title)}</h1>${content}</main></html>`;
   return response(doc, status, {
     'Content-Type': 'text/html; charset=utf-8',
-    'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'${formActionOrigin ? ` ${formActionOrigin}` : ''}; base-uri 'none'; frame-ancestors 'none'`,
     'X-Frame-Options': 'DENY',
   });
 }
@@ -320,7 +320,7 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
     const resource = url.searchParams.get('resource') ?? expectedResource;
     if (!client || url.searchParams.get('response_type') !== 'code' || url.searchParams.get('code_challenge_method') !== 'S256'
       || !/^[A-Za-z0-9_-]{43,128}$/.test(challenge) || state.length > 1024 || !requestedScopes || !scopes
-      || !client.redirectUris.some((registered) => redirectUriMatches(redirectUri, registered)) || resource !== expectedResource) {
+      || !validRedirectUri(redirectUri) || !client.redirectUris.some((registered) => redirectUriMatches(redirectUri, registered)) || resource !== expectedResource) {
       return html('Mandate sign-in could not start', '<p>The client registration or authorization request is invalid. Reconnect the client and try again.</p>', 400);
     }
     const requestId = randomSecret();
@@ -330,7 +330,7 @@ export async function handleOAuthRequest(request: Request, env: OAuthEnvironment
     const result = await database.prepare('INSERT INTO oauth_authorization_requests (request_id, client_id, redirect_uri, code_challenge, scopes_json, resource, state, expires_at_ms, wallet_nonce) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(sha256(requestId), client.clientId, redirectUri, challenge, JSON.stringify(requestedScopes), resource, state || '', expiresAt, walletNonce).run();
     if (!result.success) return oauthError('temporarily_unavailable', 503);
-    return html('Connect to Mandate', htmlForm(url, requestId, client.clientName, redirectUri, scopes, walletNonce, resource, issuedAt, expiresAt));
+    return html('Connect to Mandate', htmlForm(url, requestId, client.clientName, redirectUri, scopes, walletNonce, resource, issuedAt, expiresAt), 200, new URL(redirectUri).origin);
   }
 
   if (path === '/oauth/authorize' && request.method === 'POST') {
